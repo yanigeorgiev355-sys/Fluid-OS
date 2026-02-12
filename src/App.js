@@ -5,21 +5,9 @@ import A2UIRenderer from './A2UIRenderer';
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- SHARED PROPS DEFINITION ---
-// We define this once and use it at every level to prevent "Empty Object" errors.
-const PROPS_DEFINITION = {
-  label: { type: SchemaType.STRING, nullable: true },
-  value: { type: SchemaType.STRING, nullable: true },
-  sub: { type: SchemaType.STRING, nullable: true },
-  max: { type: SchemaType.NUMBER, nullable: true },
-  icon: { type: SchemaType.STRING, nullable: true },
-  variant: { type: SchemaType.STRING, enum: ["primary", "secondary", "danger", "ghost", "title", "sub"], nullable: true },
-  onClick: { type: SchemaType.STRING, nullable: true },
-  content: { type: SchemaType.STRING, nullable: true }
-};
-
-// --- THE FIXED SCHEMA ---
-// We explicitly define 3 levels of nesting. This covers 99% of UIs (Container -> Card -> Stat).
+// --- THE FLAT SCHEMA (Bulletproof) ---
+// No nesting. Just a list of blocks.
+// This is impossible for the API to reject because it has no depth.
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -30,34 +18,20 @@ const RESPONSE_SCHEMA = {
       nullable: true,
       properties: {
         title: { type: SchemaType.STRING },
-        root: {
-          type: SchemaType.OBJECT,
-          properties: {
-            t: { type: SchemaType.STRING }, // Root Tag
-            p: { type: SchemaType.OBJECT, nullable: true, properties: PROPS_DEFINITION }, // Root Props
-            c: {
-              type: SchemaType.ARRAY,
-              nullable: true,
-              items: {
-                type: SchemaType.OBJECT, // Level 1 Child
-                properties: {
-                  t: { type: SchemaType.STRING },
-                  p: { type: SchemaType.OBJECT, nullable: true, properties: PROPS_DEFINITION },
-                  c: {
-                    type: SchemaType.ARRAY,
-                    nullable: true,
-                    items: {
-                      type: SchemaType.OBJECT, // Level 2 Grandchild
-                      properties: {
-                         t: { type: SchemaType.STRING },
-                         p: { type: SchemaType.OBJECT, nullable: true, properties: PROPS_DEFINITION }
-                         // We stop recursion here to prevent "Infinite Loop" errors.
-                         // 3 Levels is enough for "Card > Grid > Stat".
-                      }
-                    }
-                  }
-                }
-              }
+        layout: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } }, // e.g. ["Header", "Stat", "Button"]
+        // We put all data in a flat list of blocks
+        blocks: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              t: { type: SchemaType.STRING, enum: ["Header", "Stat", "Btn", "Text", "Divider", "Input"] }, 
+              // We flatten the props. No 'p' object. Direct properties.
+              label: { type: SchemaType.STRING, nullable: true },
+              value: { type: SchemaType.STRING, nullable: true },
+              icon: { type: SchemaType.STRING, nullable: true },
+              variant: { type: SchemaType.STRING, nullable: true },
+              onClick: { type: SchemaType.STRING, nullable: true }
             }
           }
         }
@@ -70,15 +44,22 @@ const RESPONSE_SCHEMA = {
 const SYSTEM_PROMPT = `
 You are Neural OS.
 - Be conversational.
-- To build a tool, return a "tool" object using these SMART COMPONENTS:
-  1. "Stat": { label: "Water", value: "500ml", icon: "Droplets" }
-  2. "Progress": { label: "Goal", value: 50, max: 100 }
-  3. "Btn": { label: "Add Water", variant: "primary", onClick: "add_250" }
-  4. "Grid": Container for side-by-side stats/buttons.
-  5. "Card": White box to group items.
-  
-- DO NOT write CSS. The system handles design.
-- If the user adds data, CALCULATE the new state and return the updated tool.
+- To build a tool, return a "tool" object with a FLAT LIST of "blocks".
+- Do not nest components. Just list them in order from top to bottom.
+
+AVAILABLE BLOCKS:
+1. "Header": { label: "My Water", icon: "Droplets" }
+2. "Stat": { label: "Drank", value: "500ml", icon: "Cup" }
+3. "Btn": { label: "Add Water", variant: "primary", onClick: "add_250" }
+4. "Text": { label: "Keep it up!" }
+5. "Divider": {}
+
+Example for Water Tracker:
+blocks: [
+  { t: "Header", label: "Hydration", icon: "Droplets" },
+  { t: "Stat", label: "Today", value: "800ml" },
+  { t: "Btn", label: "+250ml", variant: "primary", onClick: "add_water" }
+]
 `;
 
 export default function App() {
@@ -113,7 +94,7 @@ export default function App() {
         generationConfig: { 
           responseMimeType: "application/json", 
           responseSchema: RESPONSE_SCHEMA,
-          maxOutputTokens: 2000
+          maxOutputTokens: 1000 // Very efficient schema, small token count needed
         } 
       });
 
@@ -122,7 +103,7 @@ export default function App() {
         dynamicPrompt += `\n[CURRENT APP STATE]:
         Title: "${activeApp.title}"
         Data: ${JSON.stringify(activeApp.blueprint)}
-        INSTRUCTION: Return the FULL updated component tree with new values.`;
+        INSTRUCTION: Return the FULL updated list of blocks.`;
       }
 
       const chat = model.startChat({ history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] });
