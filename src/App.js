@@ -1,77 +1,96 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Send, Menu, Settings, X, Activity, Sparkles } from 'lucide-react';
-import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai'; // Import SchemaType
+import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- THE HYBRID SCHEMA (The "Container" for Freedom) ---
-// We don't scream at the AI in text. We simply hand it this form to fill out.
+// --- THE FIXED SCHEMA ---
+// We explicitly define what a "child" component looks like to satisfy the API.
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
-    // Slot 1: The AI's internal reasoning (Hidden from user)
-    thought: { type: SchemaType.STRING, description: "Your internal reasoning about what the user needs." },
-    
-    // Slot 2: The conversational response (The "Human" part)
-    response: { type: SchemaType.STRING, description: "The natural language response to the user." },
-    
-    // Slot 3: The Tool (The "Strict" part - Optional)
+    thought: { type: SchemaType.STRING, description: "Internal reasoning." },
+    response: { type: SchemaType.STRING, description: "Response to user." },
     tool: {
       type: SchemaType.OBJECT,
       nullable: true,
-      description: "Return a tool ONLY if needed. Otherwise null.",
       properties: {
-        type: { type: SchemaType.STRING, enum: ["Card", "Text", "Gauge", "ButtonRow", "Chart"] },
+        type: { type: SchemaType.STRING },
         props: {
           type: SchemaType.OBJECT,
           properties: {
-            title: { type: SchemaType.STRING },
-            content: { type: SchemaType.STRING },
-            value: { type: SchemaType.NUMBER },
-            max: { type: SchemaType.NUMBER },
-            unit: { type: SchemaType.STRING },
-            // We force "actions" here structurally
+            title: { type: SchemaType.STRING, nullable: true },
+            content: { type: SchemaType.STRING, nullable: true },
+            value: { type: SchemaType.NUMBER, nullable: true },
+            max: { type: SchemaType.NUMBER, nullable: true },
+            unit: { type: SchemaType.STRING, nullable: true },
             actions: {
               type: SchemaType.ARRAY,
+              nullable: true,
               items: {
                 type: SchemaType.OBJECT,
                 properties: {
                   label: { type: SchemaType.STRING },
                   action: { type: SchemaType.STRING },
-                  payload: { type: SchemaType.STRING } // Simplified to string for stability
+                  payload: { type: SchemaType.STRING, nullable: true }
+                }
+              }
+            }
+          },
+          nullable: true
+        },
+        // FIX: We explicitly define the structure of children here
+        children: {
+          type: SchemaType.ARRAY,
+          nullable: true,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              type: { type: SchemaType.STRING },
+              props: {
+                type: SchemaType.OBJECT,
+                nullable: true,
+                properties: {
+                  title: { type: SchemaType.STRING, nullable: true },
+                  text: { type: SchemaType.STRING, nullable: true },
+                  content: { type: SchemaType.STRING, nullable: true },
+                  label: { type: SchemaType.STRING, nullable: true },
+                  value: { type: SchemaType.NUMBER, nullable: true },
+                  action: { type: SchemaType.STRING, nullable: true }
                 }
               }
             }
           }
-        },
-        children: { type: SchemaType.ARRAY, items: { type: SchemaType.OBJECT, properties: {} } } // Recursive simplified
+        }
       }
     }
   },
   required: ["thought", "response"]
 };
 
-// --- THE NEW "FREEDOM" PROMPT ---
-// Notice how much friendlier this is!
 const SYSTEM_PROMPT = `
-You are Neural OS, a proactive and empathetic AI assistant.
-Your goal is to help the user manage their life (health, work, habits).
-
-- Be conversational and natural.
-- You have a "Tool Drawer" capabilities (Water Trackers, Sleep Logs, Charts).
-- USE YOUR JUDGMENT: If a tool helps, create it. If not, just chat.
-- If the user is stressed, be kind. If they are efficient, be quick.
+You are Neural OS. 
+- Be conversational.
+- Use the "tool" field ONLY if you need to render a UI widget (Tracker, Chart, etc).
+- Otherwise set "tool" to null.
 `;
 
 export default function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
-  const [messages, setMessages] = useState([{ role: 'model', text: "Hello! I am your Neural OS. I'm ready to help." }]);
+  const [messages, setMessages] = useState([{ role: 'model', text: "Hello! I am your Neural OS. Ready to help." }]);
   const [input, setInput] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(!apiKey);
   const [tools, setTools] = useState([]); 
   const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  // Auto-scroll to bottom
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+  useEffect(scrollToBottom, [messages, loading]);
 
   const handleSend = async () => {
     if (!input.trim() || !apiKey) return;
@@ -87,7 +106,7 @@ export default function App() {
         model: GEMINI_MODEL_VERSION,
         generationConfig: { 
           responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA // <--- THIS IS THE MAGIC
+          responseSchema: RESPONSE_SCHEMA
         } 
       });
 
@@ -99,11 +118,10 @@ export default function App() {
 
       const result = await chat.sendMessage(input);
       const responseText = result.response.text();
-      console.log("Raw:", responseText);
+      console.log("Raw Response:", responseText);
 
       const data = JSON.parse(responseText);
       
-      // We use data.response (The Chat) AND data.tool (The Widget)
       const aiMessage = { 
         role: 'model', 
         text: data.response, 
@@ -124,9 +142,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // ... (Keep the rest of your UI code: return statement, saveKey, etc. exactly as before) ...
-  // [Copy the return (...) block from the previous App.js here]
-  
   const saveKey = (e) => {
     e.preventDefault();
     const key = e.target.elements.key.value;
@@ -159,7 +174,6 @@ export default function App() {
               }`}>
                 {m.text}
               </div>
-              {/* RENDER THE TOOL IF PRESENT */}
               {m.tool && (
                 <div className="mt-3 w-full max-w-[85%] animate-in fade-in slide-in-from-bottom-2">
                   <A2UIRenderer blueprint={m.tool} onAction={(action, pl) => alert(`Action: ${action} Payload: ${pl}`)} />
@@ -172,12 +186,13 @@ export default function App() {
               <Sparkles size={16} className="animate-spin" /> Thinking...
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
         <div className="p-4 bg-white border-t flex gap-2">
           <input 
             className="flex-1 bg-slate-100 rounded-full px-5 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
-            placeholder="Describe a tool (e.g. 'I need a water tracker')..."
+            placeholder="Type a message..."
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
