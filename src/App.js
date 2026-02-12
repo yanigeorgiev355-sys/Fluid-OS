@@ -4,10 +4,10 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
 // CONFIGURATION
-const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
+// Use 2.0-flash as the stable standard. If you have a working 2.5 key, you can swap this back.
+const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
 
 // --- SAFETY LAYER 1: ROBUST PARSING ---
-// This handles the AI response, even if it includes markdown or extra text.
 const robustJSONParse = (text) => {
   try {
     return JSON.parse(text);
@@ -20,8 +20,6 @@ const robustJSONParse = (text) => {
   }
 };
 
-// --- SAFETY LAYER 2: SAFE STORAGE LOADING ---
-// This prevents the "White Screen of Death" if localStorage has bad data.
 const loadSavedApps = () => {
   try {
     const saved = localStorage.getItem('neural_apps');
@@ -32,25 +30,41 @@ const loadSavedApps = () => {
   }
 };
 
+// --- SYSTEM PROMPT: HYBRID MODE ---
+// We allow BOTH simple JSON blocks (cheap) and full HTML (fancy)
 const SYSTEM_PROMPT = `
-You are Fluid OS.
-- If the user says "hi" or asks a question, set "tool" to null.
-- If the user asks for a tool (e.g. "calculator", "tracker"), return a "tool" object.
+You are Fluid OS, an AI that builds micro-apps.
 
-DESIGN SYSTEM (STITCH-LITE):
-Use ONLY these blocks:
-1. "Header": { "label": "Title", "value": "Subtitle", "icon": "Activity" }
-2. "Stat": { "label": "Label", "value": "Value", "icon": "Zap", "variant": "primary" }
-3. "Btn": { "label": "Button Text", "onClick": "action_id", "variant": "primary" }
-4. "Text": { "label": "Body text", "value": "Bold Heading" }
-5. "Divider": {} 
+DECISION LOGIC:
+1. IF the user needs a simple tool (calculator, tracker, list), use "BLOCKS" mode.
+   - Efficient, low-token, native UI components.
+2. IF the user needs a complex visual interface (dashboard, guide, marketplace), use "HTML" mode.
+   - High-fidelity, Tailwind CSS, beautiful design.
 
-LOGIC:
-- When a user clicks a button, calculate the new state and return the COMPLETE updated block list.
+MODE A: "BLOCKS" (JSON)
+Use these keys: { "t": "Header"|"Stat"|"Btn"|"Text"|"Divider", "label": "...", "value": "...", "onClick": "action_id" }
+
+MODE B: "HTML" (String)
+- Generate a SINGLE string of raw HTML.
+- USE TAILWIND CSS for all styling.
+- DO NOT include <html>, <head>, or <body> tags. Just the internal content.
+- Use Lucide-react style SVG icons inline if needed.
+- Make it look like a high-end "Stitch" design (soft shadows, rounded corners, generous padding).
+
+OUTPUT FORMAT (JSON):
+{
+  "thought": "Reasoning here...",
+  "response": "Chat reply to user...",
+  "tool": {
+    "title": "App Name",
+    "mode": "blocks" OR "html",
+    "blocks": [ ...array of blocks... ], 
+    "html": "...raw html string..."
+  }
+}
 `;
 
 export default function App() {
-  // Initialize state with Safety Check
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
   const [apps, setApps] = useState(loadSavedApps);
   
@@ -63,7 +77,6 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(!apiKey);
   const messagesEndRef = useRef(null);
 
-  // Save to storage whenever apps change
   useEffect(() => {
     try {
       localStorage.setItem('neural_apps', JSON.stringify(apps));
@@ -72,10 +85,8 @@ export default function App() {
     }
   }, [apps]);
 
-  // Scroll to bottom of chat
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
-  // Rate Limit Timer
   useEffect(() => {
     if (rateLimitTimer > 0) {
       const timer = setInterval(() => setRateLimitTimer(t => t - 1), 1000);
@@ -85,9 +96,12 @@ export default function App() {
 
   const activeApp = apps.find(a => a.id === activeAppId);
 
+  // Handle clicks inside the generated apps
   const handleAppAction = async (actionId, payload) => {
     if (rateLimitTimer > 0) return; 
-    const actionPrompt = `[USER CLICKED]: Button "${actionId}". Value: "${payload}".\nTASK: Update the interface blocks to reflect this change.`;
+    
+    // If it's an HTML app, we might need different logic, but for now we treat string messages as actions
+    const actionPrompt = `[USER INTERACTION]: Clicked "${actionId}" with value "${payload}".\nTASK: Update the interface state accordingly.`;
     handleSend(actionPrompt, true); 
   };
 
@@ -109,57 +123,35 @@ export default function App() {
       const model = genAI.getGenerativeModel({ 
         model: GEMINI_MODEL_VERSION,
         generationConfig: { 
-          responseMimeType: "application/json", 
-          // We define schema manually to avoid "SchemaType is undefined" errors
-          responseSchema: {
-            type: "OBJECT",
-            properties: {
-              thought: { type: "STRING" },
-              response: { type: "STRING" },
-              tool: {
-                type: "OBJECT",
-                nullable: true,
-                properties: {
-                  title: { type: "STRING" },
-                  blocks: {
-                    type: "ARRAY",
-                    items: {
-                      type: "OBJECT",
-                      properties: {
-                        t: { type: "STRING", enum: ["Header", "Stat", "Btn", "Text", "Divider"] }, 
-                        label: { type: "STRING", nullable: true },
-                        value: { type: "STRING", nullable: true },
-                        icon: { type: "STRING", nullable: true },
-                        variant: { type: "STRING", nullable: true }, 
-                        onClick: { type: "STRING", nullable: true }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            required: ["thought", "response"]
-          }
+          responseMimeType: "application/json" 
+          // Note: We removed the strict schema validation here to give the AI 
+          // more freedom to generate complex HTML strings without validation errors.
         } 
       });
 
       let dynamicPrompt = SYSTEM_PROMPT;
       if (activeApp) {
-        dynamicPrompt += `\n[CURRENT APP STATE ("${activeApp.title}")]:
-        ${JSON.stringify(activeApp.blueprint.blocks)}
-        \nINSTRUCTION: Apply action "${textToSend}" to this state. Return the NEW complete block list.`;
+        dynamicPrompt += `\n[CURRENT APP STATE]:
+        Title: ${activeApp.title}
+        Mode: ${activeApp.blueprint.mode || 'blocks'}
+        Data: ${JSON.stringify(activeApp.blueprint.blocks || "HTML Mode Active")}
+        \nINSTRUCTION: Apply action "${textToSend}" to this state. Return the NEW complete tool object.`;
       }
 
-      const chat = model.startChat({ 
-        history: messages.filter(m => m.role !== 'system').map(m => ({
+      // --- CRITICAL FIX: HISTORY FILTERING ---
+      // Gemini throws 400 if history starts with 'model'. We filter it out.
+      const historyForGemini = messages
+        .filter(m => m.role !== 'system')
+        // Filter out the very first message if it is from the model
+        .filter((msg, index) => !(index === 0 && msg.role === 'model'))
+        .map(m => ({
             role: m.role === 'model' ? 'model' : 'user',
             parts: [{ text: m.text }]
-        }))
-      });
+        }));
 
+      const chat = model.startChat({ history: historyForGemini });
       const result = await chat.sendMessage(textToSend);
       const responseText = result.response.text();
-      
       const data = robustJSONParse(responseText);
 
       if (!data) {
@@ -171,6 +163,9 @@ export default function App() {
           
           if (data.tool) {
             const newToolTitle = data.tool.title || activeApp?.title || "New App";
+            // Ensure mode is set
+            if (!data.tool.mode) data.tool.mode = data.tool.html ? 'html' : 'blocks';
+
             if (activeApp) {
                 setApps(prev => prev.map(app => 
                   app.id === activeAppId ? { ...app, blueprint: data.tool, title: newToolTitle } : app
@@ -184,6 +179,7 @@ export default function App() {
           }
       }
     } catch (e) {
+      console.error(e);
       if (e.message.includes('429')) {
         setRateLimitTimer(60); 
       } else {
@@ -201,7 +197,6 @@ export default function App() {
     setSettingsOpen(false); 
   };
 
-  // --- SAFETY LAYER 3: HARD RESET ---
   const handleReset = () => {
     if(window.confirm("This will delete all apps and reset the tool. Are you sure?")) {
         localStorage.removeItem('neural_apps');
@@ -263,6 +258,7 @@ export default function App() {
             value={input} 
             onChange={(e) => setInput(e.target.value)} 
             disabled={rateLimitTimer > 0} 
+            onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }}}
           />
           <button 
             onClick={() => handleSend()} 
@@ -285,14 +281,15 @@ export default function App() {
           </button>
         </div>
         
-        <div className="flex-1 overflow-y-auto relative custom-scrollbar">
+        {/* APP CONTAINER */}
+        <div className="flex-1 overflow-hidden relative">
           {loading && (
             <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-slate-900/90 text-white px-5 py-2 rounded-full text-xs font-bold z-50 flex items-center gap-2 shadow-2xl backdrop-blur-sm">
                 <Loader2 size={14} className="animate-spin text-blue-400"/> UPDATING...
             </div>
           )}
 
-          <div className="pt-6">
+          <div className="h-full w-full overflow-y-auto custom-scrollbar">
             {activeApp && <A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} />}
           </div>
         </div>
@@ -320,7 +317,7 @@ export default function App() {
                     {app.title.charAt(0)}
                 </div>
                 <h3 className="font-bold text-slate-900 truncate mb-1">{app.title}</h3>
-                <p className="text-xs text-slate-400">Micro-App</p>
+                <p className="text-xs text-slate-400">{app.blueprint.mode === 'html' ? 'Pro App' : 'Basic App'}</p>
                 <button onClick={(e) => deleteApp(app.id, e)} className="absolute top-4 right-4 text-slate-300 hover:text-red-500 transition-colors p-2">
                     <Trash2 size={16}/>
                 </button>
@@ -330,17 +327,15 @@ export default function App() {
         </div>
       </div>
 
-      {/* TOGGLE BUTTON */}
       {view !== 'dock' && (
         <button 
             onClick={() => setView(view === 'chat' ? 'app' : 'chat')} 
-            className="fixed bottom-48 right-6 bg-slate-900 text-white p-4 rounded-full shadow-2xl z-30 hover:scale-105 transition-transform active:scale-95 border border-white/10"
+            className="fixed bottom-8 right-6 bg-slate-900 text-white p-4 rounded-full shadow-2xl z-30 hover:scale-105 transition-transform active:scale-95 border border-white/10"
         >
           {view === 'chat' ? <Smartphone size={24} /> : <MessageSquare size={24} />}
         </button>
       )}
 
-      {/* SETTINGS MODAL */}
       {settingsOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <form onSubmit={saveKey} className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl relative overflow-hidden">
@@ -353,8 +348,6 @@ export default function App() {
                     className="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl mb-6 focus:ring-2 focus:ring-blue-500 focus:outline-none" 
                 />
                 <button type="submit" className="w-full bg-slate-900 text-white py-4 rounded-xl font-bold hover:bg-slate-800 transition-colors shadow-lg">Start Engine</button>
-                
-                {/* EMERGENCY RESET BUTTON */}
                 <div className="mt-8 pt-6 border-t border-slate-100">
                     <button type="button" onClick={handleReset} className="w-full flex items-center justify-center gap-2 text-red-500 text-sm font-medium hover:bg-red-50 p-3 rounded-lg transition-colors">
                         <RefreshCw size={16}/> Reset All App Data
