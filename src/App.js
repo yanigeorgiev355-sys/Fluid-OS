@@ -3,9 +3,8 @@ import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, S
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
-const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; // Using Flash for speed/cost balance
+const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
 
-// The Schema forces Gemini to return JSON we can actually use
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -25,7 +24,7 @@ const RESPONSE_SCHEMA = {
               label: { type: SchemaType.STRING, nullable: true },
               value: { type: SchemaType.STRING, nullable: true },
               icon: { type: SchemaType.STRING, nullable: true },
-              variant: { type: SchemaType.STRING, nullable: true }, // primary, secondary, danger, ghost
+              variant: { type: SchemaType.STRING, nullable: true }, 
               onClick: { type: SchemaType.STRING, nullable: true }
             }
           }
@@ -36,7 +35,6 @@ const RESPONSE_SCHEMA = {
   required: ["thought", "response"]
 };
 
-// The "Brain" of the operation. This prompt tells Gemini how to act.
 const SYSTEM_PROMPT = `
 You are Fluid OS, a Disposable App Generator.
 Your goal is to create ephemeral, micro-tools for specific user tasks.
@@ -46,25 +44,13 @@ You must build interfaces using ONLY these JSON blocks.
 Do not write HTML. Write JSON that represents these blocks:
 
 1. "Header": { "label": "Main Title", "value": "Subtitle or Date", "icon": "Activity" }
-   - Use for the top of the app.
-   
-2. "Stat": { "label": "Label (e.g. TODAY)", "value": "Value (e.g. 100%)", "icon": "Zap", "variant": "primary" }
-   - Use "variant": "primary" for the most important number.
-   - Use "variant": "default" for secondary stats.
-
+2. "Stat": { "label": "Label", "value": "Value", "icon": "Zap", "variant": "primary" }
 3. "Btn": { "label": "Button Text", "onClick": "action_id", "variant": "primary" }
-   - Variants: "primary" (Dark/Bold), "secondary" (White/Border), "danger" (Red), "ghost" (Text only).
-
-4. "Text": { "label": "Body text here", "value": "Bold Heading (Optional)" }
-   - Use for instructions, lists, or feedback.
-
+4. "Text": { "label": "Body text", "value": "Bold Heading" }
 5. "Divider": {} 
-   - Use to separate sections visually.
 
 LOGIC RULES:
-- When a user clicks a button (e.g., "add_water"), YOU must calculate the new state.
-- Update the numbers in the "Stat" blocks.
-- Return the COMPLETE list of blocks with the new values.
+- When a user clicks a button, calculate the new state and return the COMPLETE updated block list.
 - Keep apps focused. One screen, one specific job.
 `;
 
@@ -94,21 +80,18 @@ export default function App() {
 
   const activeApp = apps.find(a => a.id === activeAppId);
 
-  // Handles clicks inside the generated app
   const handleAppAction = async (actionId, payload) => {
     if (rateLimitTimer > 0) return; 
-    const actionPrompt = `[USER CLICKED]: Button "${actionId}". Value: "${payload}".\nTASK: Update the interface blocks to reflect this change. Calculate new values if needed.`;
+    const actionPrompt = `[USER CLICKED]: Button "${actionId}". Value: "${payload}".\nTASK: Update the interface blocks to reflect this change.`;
     handleSend(actionPrompt, true); 
   };
 
-  // Main communication loop with Gemini
   const handleSend = async (manualInput = null, isSystemAction = false) => {
     if (rateLimitTimer > 0) return; 
     
     const textToSend = manualInput || input;
     if (!textToSend.trim() || !apiKey) return;
     
-    // Only show user text in chat, hide system action prompts
     if (!isSystemAction) {
         setMessages(prev => [...prev, { role: 'user', text: textToSend }]);
         setInput('');
@@ -123,7 +106,7 @@ export default function App() {
         generationConfig: { 
           responseMimeType: "application/json", 
           responseSchema: RESPONSE_SCHEMA,
-          maxOutputTokens: 2000 // Increased for larger UIs
+          maxOutputTokens: 2000 
         } 
       });
 
@@ -143,43 +126,39 @@ export default function App() {
 
       const result = await chat.sendMessage(textToSend);
       const responseText = result.response.text();
-      let data;
       
+      let data;
       try {
-        data = JSON.parse(responseText);
+        // --- CRITICAL FIX: CLEAN JSON ---
+        // Removes markdown code blocks and whitespace before parsing
+        const cleanText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+        data = JSON.parse(cleanText);
       } catch (jsonError) {
         console.error("JSON Parse Error:", jsonError);
-        data = { response: "Error parsing AI response. Try again.", tool: null };
+        // Fallback allows the user to see what went wrong without crashing
+        data = { response: "I had trouble updating the app. Please try again.", tool: null };
       }
 
-      // If there's a thought/text response, show it (unless it's just a button click update)
       if (data.response && !isSystemAction) {
           setMessages(prev => [...prev, { role: 'model', text: data.response }]);
       }
       
-      // If the AI generated a tool/interface update
       if (data.tool) {
         const newToolTitle = data.tool.title || activeApp?.title || "New App";
-        
         if (activeApp) {
-             // Update existing app
              setApps(prev => prev.map(app => 
                app.id === activeAppId ? { ...app, blueprint: data.tool, title: newToolTitle } : app
              ));
         } else {
-             // Create new app
              const newApp = { id: Date.now(), title: newToolTitle, blueprint: data.tool };
              setApps(prev => [...prev, newApp]);
              setActiveAppId(newApp.id);
         }
-        
-        // Auto-switch to app view if this was a user creation request
         if (!isSystemAction) setView('app'); 
       }
     } catch (e) {
-      console.error(e);
       if (e.message.includes('429')) {
-        setRateLimitTimer(60); // 1 minute penalty for rate limit
+        setRateLimitTimer(60); 
       } else {
         setMessages(prev => [...prev, { role: 'model', text: "Error: " + e.message }]);
       }
@@ -220,7 +199,7 @@ export default function App() {
         
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.map((m, i) => (
-            <div key={i} className={`p-4 rounded-2xl max-w-[85%] text-sm leading-relaxed ${
+            <div key={i} className={`p-4 rounded-2xl max-w-[85%] text-sm leading-relaxed whitespace-pre-wrap ${
                 m.role === 'user' 
                 ? 'bg-slate-900 text-white self-end ml-auto rounded-tr-none' 
                 : 'bg-slate-100 text-slate-800 rounded-tl-none'
@@ -231,33 +210,33 @@ export default function App() {
           <div ref={messagesEndRef} />
         </div>
         
-        {/* Rate Limit Warning */}
         {rateLimitTimer > 0 && (
             <div className="bg-orange-50 text-orange-600 text-xs p-2 text-center flex items-center justify-center gap-2 animate-pulse">
                 <AlertTriangle size={14}/> API Cooling Down: {rateLimitTimer}s
             </div>
         )}
 
-        <div className="p-3 border-t bg-white flex gap-2">
-          <input 
-            className="flex-1 bg-slate-50 border border-slate-200 rounded-full px-5 py-3 focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50" 
+        {/* UPDATED INPUT AREA: 3 Rows, No Enter-to-Send */}
+        <div className="p-3 border-t bg-white flex gap-2 items-end">
+          <textarea 
+            className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50 resize-none font-sans text-sm" 
+            rows={3}
             placeholder={rateLimitTimer > 0 ? "Waiting for cool down..." : "Describe an app to build..."} 
             value={input} 
             onChange={(e) => setInput(e.target.value)} 
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
             disabled={rateLimitTimer > 0} 
           />
           <button 
             onClick={() => handleSend()} 
             disabled={rateLimitTimer > 0 || loading} 
-            className="bg-blue-600 text-white p-3 rounded-full shadow-lg disabled:bg-slate-300 hover:bg-blue-700 transition-colors"
+            className="bg-blue-600 text-white p-3 mb-1 rounded-full shadow-lg disabled:bg-slate-300 hover:bg-blue-700 transition-colors"
           >
             {loading ? <Loader2 size={20} className="animate-spin"/> : <Send size={20}/>}
           </button>
         </div>
       </div>
 
-      {/* --- VIEW 2: APP STAGE ( The Stitch UI ) --- */}
+      {/* --- VIEW 2: APP STAGE --- */}
       <div className={`absolute inset-0 flex flex-col bg-slate-50 transition-transform duration-300 ${view === 'app' ? 'translate-x-0' : 'translate-x-full'}`}>
         <div className="p-4 bg-white/80 backdrop-blur-md z-10 sticky top-0 flex justify-between items-center border-b border-slate-100">
           <span className="font-bold text-slate-800 flex items-center gap-2">
@@ -269,7 +248,6 @@ export default function App() {
         </div>
         
         <div className="flex-1 overflow-y-auto relative custom-scrollbar">
-          {/* Update Loading Spinner */}
           {loading && (
             <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-slate-900/90 text-white px-5 py-2 rounded-full text-xs font-bold z-50 flex items-center gap-2 shadow-2xl backdrop-blur-sm">
                 <Loader2 size={14} className="animate-spin text-blue-400"/> UPDATING...
@@ -277,17 +255,12 @@ export default function App() {
           )}
 
           <div className="pt-6">
-            {activeApp && (
-                <A2UIRenderer 
-                    blueprint={activeApp.blueprint} 
-                    onAction={handleAppAction} 
-                />
-            )}
+            {activeApp && <A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} />}
           </div>
         </div>
       </div>
 
-      {/* --- VIEW 3: THE DOCK (App Switcher) --- */}
+      {/* --- VIEW 3: THE DOCK --- */}
       <div className={`absolute inset-0 bg-slate-900/95 backdrop-blur-xl z-40 transition-opacity duration-300 ${view === 'dock' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
         <div className="p-6 h-full flex flex-col">
           <div className="flex justify-between items-center text-white mb-8">
@@ -296,7 +269,6 @@ export default function App() {
                 <X size={28}/>
             </button>
           </div>
-          
           <div className="grid grid-cols-2 gap-4 overflow-y-auto pb-20">
             <button onClick={() => { setActiveAppId(null); setView('chat'); }} className="bg-white/5 hover:bg-white/10 border-2 border-dashed border-white/20 rounded-3xl p-6 flex flex-col items-center justify-center gap-4 text-white transition-all group">
                 <div className="bg-blue-600 p-4 rounded-2xl group-hover:scale-110 transition-transform shadow-lg shadow-blue-900/50">
@@ -304,7 +276,6 @@ export default function App() {
                 </div>
                 <span className="font-medium text-sm">Create New</span>
             </button>
-            
             {apps.map(app => (
               <div key={app.id} onClick={() => { setActiveAppId(app.id); setView('app'); }} className="bg-white p-5 rounded-3xl shadow-xl relative cursor-pointer hover:scale-[1.02] transition-transform group">
                 <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-4 shadow-md flex items-center justify-center text-white font-bold text-xl">
@@ -321,41 +292,30 @@ export default function App() {
         </div>
       </div>
 
-      {/* FLOATING TOGGLE BUTTON (Visible when not in Dock) */}
+      {/* FIXED TOGGLE BUTTON: Moved to bottom-48 (Higher up) */}
       {view !== 'dock' && (
         <button 
             onClick={() => setView(view === 'chat' ? 'app' : 'chat')} 
-            className="fixed bottom-8 right-6 bg-slate-900 text-white p-4 rounded-full shadow-2xl z-30 hover:scale-105 transition-transform active:scale-95 border border-white/10"
+            className="fixed bottom-48 right-6 bg-slate-900 text-white p-4 rounded-full shadow-2xl z-30 hover:scale-105 transition-transform active:scale-95 border border-white/10"
         >
           {view === 'chat' ? <Smartphone size={24} /> : <MessageSquare size={24} />}
         </button>
       )}
 
-      {/* SETTINGS / API KEY MODAL */}
+      {/* SETTINGS MODAL */}
       {settingsOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <form onSubmit={saveKey} className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 to-indigo-600"></div>
                 <h2 className="text-2xl font-bold mb-2 text-slate-900">Unlock Fluid OS</h2>
-                <p className="text-slate-500 text-sm mb-6">Enter your Google Gemini API Key to start building. It's free.</p>
-                
-                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">API Key</label>
+                <p className="text-slate-500 text-sm mb-6">Enter your Google Gemini API Key.</p>
                 <input 
                     name="key" 
                     type="password" 
                     defaultValue={apiKey}
                     placeholder="AIzaSy..." 
-                    className="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl mb-6 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all font-mono text-sm" 
+                    className="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl mb-6 focus:ring-2 focus:ring-blue-500 focus:outline-none" 
                 />
-                
-                <button type="submit" className="w-full bg-slate-900 text-white py-4 rounded-xl font-bold hover:bg-slate-800 transition-colors shadow-lg">
-                    Start Engine
-                </button>
-                <div className="mt-4 text-center">
-                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">
-                        Get a free key here &rarr;
-                    </a>
-                </div>
+                <button type="submit" className="w-full bg-slate-900 text-white py-4 rounded-xl font-bold hover:bg-slate-800 transition-colors shadow-lg">Start Engine</button>
             </form>
         </div>
       )}
