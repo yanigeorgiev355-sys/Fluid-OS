@@ -1,11 +1,9 @@
 import React from 'react';
 import * as Icons from 'lucide-react';
 
-// The "Stitch" Aesthetic: Soft shadows, big rounding, generous padding
 const CARD_BASE = "bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100 hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-300";
 
 const COMPONENTS = {
-  // 1. The Hero Header (seen in Skiing/Pottery apps)
   Header: ({ label, icon, value }) => {
     const Icon = icon && Icons[icon] ? Icons[icon] : Icons.Sparkles;
     return (
@@ -19,16 +17,13 @@ const COMPONENTS = {
     );
   },
 
-  // 2. The "Big Stat" Card (seen in Dashboard templates)
   Stat: ({ label, value, icon, variant }) => {
     const Icon = icon && Icons[icon] ? Icons[icon] : null;
     const isPrimary = variant === 'primary';
     
     return (
       <div className={`${CARD_BASE} flex items-center justify-between group cursor-default relative overflow-hidden`}>
-        {/* Decorative background blob for "Primary" stats */}
         {isPrimary && <div className="absolute -right-6 -top-6 w-24 h-24 bg-blue-50 rounded-full blur-2xl group-hover:bg-blue-100 transition-colors"></div>}
-        
         <div className="relative z-10">
           <p className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">{label}</p>
           <p className="text-3xl font-black text-slate-800 tracking-tight">{value}</p>
@@ -42,11 +37,9 @@ const COMPONENTS = {
     );
   },
 
-  // 3. The Action Button (Pill shape from Stitch UI)
   Btn: ({ label, onClick, variant, icon }) => {
     const Icon = icon && Icons[icon] ? Icons[icon] : (variant === 'add' ? Icons.Plus : Icons.ArrowRight);
     
-    // Stitch uses gradients for primary actions
     const baseClass = "w-full py-4 px-6 rounded-full font-bold text-lg flex items-center justify-center gap-3 transition-all active:scale-95 shadow-lg shadow-blue-900/5";
     const variants = {
       primary: "bg-slate-900 text-white hover:bg-slate-800 hover:shadow-xl",
@@ -63,7 +56,6 @@ const COMPONENTS = {
     );
   },
 
-  // 4. Information/Text Block
   Text: ({ label, value }) => (
     <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-slate-600 text-sm leading-relaxed mb-4">
       {value && <strong className="block text-slate-900 mb-1">{value}</strong>}
@@ -75,28 +67,54 @@ const COMPONENTS = {
 };
 
 const A2UIRenderer = ({ blueprint, onAction }) => {
-  if (!blueprint || !blueprint.blocks) return (
+  // Loading State
+  if (!blueprint) return (
     <div className="flex flex-col items-center justify-center h-64 text-slate-400 animate-pulse">
       <Icons.LayoutTemplate size={48} className="mb-4 opacity-20"/>
       <p>Building Interface...</p>
     </div>
   );
 
-  return (
-    <div className="w-full max-w-md mx-auto pb-32 px-4 space-y-4">
-      {blueprint.blocks.map((block, index) => {
-        const Component = COMPONENTS[block.t] || COMPONENTS.Text;
-        return (
-          <div key={index} className="animate-in slide-in-from-bottom-4 fade-in duration-500" style={{ animationDelay: `${index * 50}ms` }}>
-            <Component 
-              {...block} 
-              onClick={block.onClick ? () => onAction(block.onClick, "click") : undefined} 
+  // --- MODE A: HIGH FIDELITY (Raw HTML) ---
+  if (blueprint.mode === 'html' || blueprint.html) {
+      return (
+          <div className="w-full h-full min-h-[500px] p-4">
+            {/* We use a simple div wrapper with dangerouslySetInnerHTML.
+                In a real production app with user content, you'd want to sanitize this.
+                Since this is AI-generated local content, it's relatively safe for a demo.
+            */}
+            <div 
+                className="prose prose-slate max-w-none"
+                dangerouslySetInnerHTML={{ __html: blueprint.html }} 
+                onClick={(e) => {
+                    // Capture clicks on elements with data-action attributes if you want interactive HTML later
+                    // For now, this is mostly visual
+                }}
             />
           </div>
-        );
-      })}
-    </div>
-  );
+      );
+  }
+
+  // --- MODE B: BLOCKS (Low Token) ---
+  if (blueprint.blocks) {
+    return (
+        <div className="w-full max-w-md mx-auto pb-32 pt-6 px-4 space-y-4">
+        {blueprint.blocks.map((block, index) => {
+            const Component = COMPONENTS[block.t] || COMPONENTS.Text;
+            return (
+            <div key={index} className="animate-in slide-in-from-bottom-4 fade-in duration-500" style={{ animationDelay: `${index * 50}ms` }}>
+                <Component 
+                {...block} 
+                onClick={block.onClick ? () => onAction(block.onClick, "click") : undefined} 
+                />
+            </div>
+            );
+        })}
+        </div>
+    );
+  }
+
+  return null;
 };
 
 export default A2UIRenderer;
