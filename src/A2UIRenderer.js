@@ -13,9 +13,12 @@ const COMPONENTS = {
   },
 
   Stat: ({ label, value, icon }) => {
+    // GHOST CHECK: If no label and no value, don't render anything.
+    if (!label && !value) return null;
+    
     const Icon = icon && Icons[icon] ? Icons[icon] : null;
     return (
-      <div className="flex items-center p-4 bg-white rounded-xl border border-slate-200 shadow-sm mb-3">
+      <div className="flex items-center p-4 bg-white rounded-xl border border-slate-200 shadow-sm mb-3 animate-in slide-in-from-bottom-2">
         {Icon && <div className="mr-4 text-slate-400"><Icon size={20} /></div>}
         <div className="flex-1">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">{label}</p>
@@ -28,25 +31,28 @@ const COMPONENTS = {
   Btn: ({ label, onClick, variant }) => (
     <button 
       onClick={onClick}
-      className={`w-full py-3 px-4 rounded-xl font-bold text-sm shadow-md transition-transform active:scale-95 mb-3
+      className={`w-full py-3 px-4 rounded-xl font-bold text-sm shadow-md transition-all active:scale-95 mb-3
         ${variant === 'primary' ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'}`}
     >
       {label}
     </button>
   ),
 
-  Text: ({ label }) => (
-    <p className="text-slate-600 text-sm text-center my-4">{label}</p>
-  ),
+  Text: ({ label }) => {
+    if (!label) return null;
+    return <p className="text-slate-500 text-sm text-center my-4 italic">{label}</p>;
+  },
   
-  Divider: () => <hr className="my-4 border-slate-200" />
+  Divider: () => <hr className="my-4 border-slate-200" />,
+  
+  Input: () => null // We aren't using inputs yet, so hide them to be safe
 };
 
 const A2UIRenderer = ({ blueprint, onAction }) => {
   if (!blueprint || !blueprint.blocks) return <div className="text-center p-8 text-slate-400">Empty App</div>;
 
   return (
-    <div className="w-full max-w-sm mx-auto animate-in slide-in-from-bottom-4 duration-500">
+    <div className="w-full max-w-sm mx-auto pb-20"> {/* Added padding bottom for scroll */}
       {blueprint.blocks.map((block, index) => {
         const Component = COMPONENTS[block.t] || COMPONENTS.Text;
         return (
