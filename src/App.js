@@ -4,7 +4,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
 // CONFIGURATION
-const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
+const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
 // --- SAFETY LAYER 1: ROBUST PARSING ---
 // This handles the AI response, even if it includes markdown or extra text.
