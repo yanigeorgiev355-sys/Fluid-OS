@@ -1,44 +1,40 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, Send, AlertTriangle, Loader2 } from 'lucide-react';
-import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
+import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, Send, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
-// Using Flash for speed.
+// CONFIGURATION
 const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
 
-const RESPONSE_SCHEMA = {
-  type: SchemaType.OBJECT,
-  properties: {
-    thought: { type: SchemaType.STRING },
-    response: { type: SchemaType.STRING },
-    tool: {
-      type: SchemaType.OBJECT,
-      nullable: true,
-      properties: {
-        title: { type: SchemaType.STRING },
-        blocks: {
-          type: SchemaType.ARRAY,
-          items: {
-            type: SchemaType.OBJECT,
-            properties: {
-              t: { type: SchemaType.STRING, enum: ["Header", "Stat", "Btn", "Text", "Divider"] }, 
-              label: { type: SchemaType.STRING, nullable: true },
-              value: { type: SchemaType.STRING, nullable: true },
-              icon: { type: SchemaType.STRING, nullable: true },
-              variant: { type: SchemaType.STRING, nullable: true }, 
-              onClick: { type: SchemaType.STRING, nullable: true }
-            }
-          }
-        }
-      }
+// --- SAFETY LAYER 1: ROBUST PARSING ---
+// This handles the AI response, even if it includes markdown or extra text.
+const robustJSONParse = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { return JSON.parse(jsonMatch[0]); } catch (e2) { return null; }
     }
-  },
-  required: ["thought", "response"]
+    return null;
+  }
+};
+
+// --- SAFETY LAYER 2: SAFE STORAGE LOADING ---
+// This prevents the "White Screen of Death" if localStorage has bad data.
+const loadSavedApps = () => {
+  try {
+    const saved = localStorage.getItem('neural_apps');
+    return saved ? JSON.parse(saved) : [];
+  } catch (e) {
+    console.error("Corrupted App Data found. Resetting...", e);
+    return [];
+  }
 };
 
 const SYSTEM_PROMPT = `
 You are Fluid OS.
-- If the user just says "hi" or asks a question, set "tool" to null.
+- If the user says "hi" or asks a question, set "tool" to null.
 - If the user asks for a tool (e.g. "calculator", "tracker"), return a "tool" object.
 
 DESIGN SYSTEM (STITCH-LITE):
@@ -54,11 +50,12 @@ LOGIC:
 `;
 
 export default function App() {
+  // Initialize state with Safety Check
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
-  const [apps, setApps] = useState(() => JSON.parse(localStorage.getItem('neural_apps') || '[]'));
+  const [apps, setApps] = useState(loadSavedApps);
+  
   const [messages, setMessages] = useState([{ role: 'model', text: "Ready. What shall we build?" }]);
   const [input, setInput] = useState('');
-  
   const [activeAppId, setActiveAppId] = useState(null); 
   const [view, setView] = useState('chat'); 
   const [loading, setLoading] = useState(false);
@@ -66,9 +63,19 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(!apiKey);
   const messagesEndRef = useRef(null);
 
-  useEffect(() => { localStorage.setItem('neural_apps', JSON.stringify(apps)); }, [apps]);
+  // Save to storage whenever apps change
+  useEffect(() => {
+    try {
+      localStorage.setItem('neural_apps', JSON.stringify(apps));
+    } catch (e) {
+      console.error("Failed to save apps", e);
+    }
+  }, [apps]);
+
+  // Scroll to bottom of chat
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
+  // Rate Limit Timer
   useEffect(() => {
     if (rateLimitTimer > 0) {
       const timer = setInterval(() => setRateLimitTimer(t => t - 1), 1000);
@@ -82,27 +89,6 @@ export default function App() {
     if (rateLimitTimer > 0) return; 
     const actionPrompt = `[USER CLICKED]: Button "${actionId}". Value: "${payload}".\nTASK: Update the interface blocks to reflect this change.`;
     handleSend(actionPrompt, true); 
-  };
-
-  // --- THE NUCLEAR PARSER ---
-  // This extracts the JSON object directly using Regex, ignoring all other text.
-  const robustJSONParse = (text) => {
-    try {
-      // 1. Try standard parse first
-      return JSON.parse(text);
-    } catch (e) {
-      // 2. If that fails, hunt for the first '{' and the last '}'
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          return JSON.parse(jsonMatch[0]);
-        } catch (e2) {
-          console.error("Regex Parse Failed", e2);
-          return null;
-        }
-      }
-      return null;
-    }
   };
 
   const handleSend = async (manualInput = null, isSystemAction = false) => {
@@ -124,8 +110,36 @@ export default function App() {
         model: GEMINI_MODEL_VERSION,
         generationConfig: { 
           responseMimeType: "application/json", 
-          responseSchema: RESPONSE_SCHEMA,
-          maxOutputTokens: 4000 
+          // We define schema manually to avoid "SchemaType is undefined" errors
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              thought: { type: "STRING" },
+              response: { type: "STRING" },
+              tool: {
+                type: "OBJECT",
+                nullable: true,
+                properties: {
+                  title: { type: "STRING" },
+                  blocks: {
+                    type: "ARRAY",
+                    items: {
+                      type: "OBJECT",
+                      properties: {
+                        t: { type: "STRING", enum: ["Header", "Stat", "Btn", "Text", "Divider"] }, 
+                        label: { type: "STRING", nullable: true },
+                        value: { type: "STRING", nullable: true },
+                        icon: { type: "STRING", nullable: true },
+                        variant: { type: "STRING", nullable: true }, 
+                        onClick: { type: "STRING", nullable: true }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            required: ["thought", "response"]
+          }
         } 
       });
 
@@ -146,8 +160,6 @@ export default function App() {
       const result = await chat.sendMessage(textToSend);
       const responseText = result.response.text();
       
-      console.log("Raw AI Response:", responseText); // Check console if it fails
-
       const data = robustJSONParse(responseText);
 
       if (!data) {
@@ -187,6 +199,17 @@ export default function App() {
     localStorage.setItem('gemini_key', key); 
     setApiKey(key); 
     setSettingsOpen(false); 
+  };
+
+  // --- SAFETY LAYER 3: HARD RESET ---
+  const handleReset = () => {
+    if(window.confirm("This will delete all apps and reset the tool. Are you sure?")) {
+        localStorage.removeItem('neural_apps');
+        setApps([]);
+        setView('chat');
+        setMessages([{ role: 'model', text: "System Reset Complete. Ready." }]);
+        setSettingsOpen(false);
+    }
   };
 
   const deleteApp = (id, e) => { 
@@ -231,7 +254,7 @@ export default function App() {
             </div>
         )}
 
-        {/* INPUT AREA: 3 Rows, Enter = New Line */}
+        {/* INPUT AREA */}
         <div className="p-3 border-t bg-white flex gap-2 items-end pb-8">
           <textarea 
             className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50 resize-none font-sans text-sm" 
@@ -307,7 +330,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* TOGGLE BUTTON: Fixed to be MUCH higher up (bottom-48) */}
+      {/* TOGGLE BUTTON */}
       {view !== 'dock' && (
         <button 
             onClick={() => setView(view === 'chat' ? 'app' : 'chat')} 
@@ -330,6 +353,13 @@ export default function App() {
                     className="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl mb-6 focus:ring-2 focus:ring-blue-500 focus:outline-none" 
                 />
                 <button type="submit" className="w-full bg-slate-900 text-white py-4 rounded-xl font-bold hover:bg-slate-800 transition-colors shadow-lg">Start Engine</button>
+                
+                {/* EMERGENCY RESET BUTTON */}
+                <div className="mt-8 pt-6 border-t border-slate-100">
+                    <button type="button" onClick={handleReset} className="w-full flex items-center justify-center gap-2 text-red-500 text-sm font-medium hover:bg-red-50 p-3 rounded-lg transition-colors">
+                        <RefreshCw size={16}/> Reset All App Data
+                    </button>
+                </div>
             </form>
         </div>
       )}
