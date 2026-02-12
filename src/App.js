@@ -3,10 +3,10 @@ import { Send, Menu, Settings, X, Activity, Sparkles } from 'lucide-react';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
-const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
+const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
 
-// --- THE STRICT SCHEMA (With Enums) ---
-// We now force the AI to pick from our list. It CANNOT invent names anymore.
+// --- THE STABLE SCHEMA ---
+// We removed deep recursion to fix the "non-empty" error.
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -16,33 +16,14 @@ const RESPONSE_SCHEMA = {
       type: SchemaType.OBJECT,
       nullable: true,
       properties: {
-        // LOCK 1: The Main Tool must be a Card
-        type: { 
-          type: SchemaType.STRING,
-          enum: ["Card", "Text", "Gauge", "ButtonRow", "Chart"] 
-        },
+        type: { type: SchemaType.STRING }, // Main container (Card)
         props: {
           type: SchemaType.OBJECT,
+          nullable: true,
           properties: {
             title: { type: SchemaType.STRING, nullable: true },
-            content: { type: SchemaType.STRING, nullable: true },
-            value: { type: SchemaType.NUMBER, nullable: true },
-            max: { type: SchemaType.NUMBER, nullable: true },
-            unit: { type: SchemaType.STRING, nullable: true },
-            actions: {
-              type: SchemaType.ARRAY,
-              nullable: true,
-              items: {
-                type: SchemaType.OBJECT,
-                properties: {
-                  label: { type: SchemaType.STRING },
-                  action: { type: SchemaType.STRING },
-                  payload: { type: SchemaType.STRING, nullable: true }
-                }
-              }
-            }
-          },
-          nullable: true
+            subtitle: { type: SchemaType.STRING, nullable: true }
+          }
         },
         children: {
           type: SchemaType.ARRAY,
@@ -50,26 +31,36 @@ const RESPONSE_SCHEMA = {
           items: {
             type: SchemaType.OBJECT,
             properties: {
-              // LOCK 2: The Children must be valid components
+              // Level 2 Components (Text, Gauge, Buttons)
               type: { 
                 type: SchemaType.STRING,
-                enum: ["Card", "Text", "Gauge", "ButtonRow", "Chart"] 
+                enum: ["Text", "Gauge", "ButtonRow", "Chart"] 
               },
               props: {
                 type: SchemaType.OBJECT,
                 nullable: true,
                 properties: {
-                  title: { type: SchemaType.STRING, nullable: true },
-                  text: { type: SchemaType.STRING, nullable: true },
                   content: { type: SchemaType.STRING, nullable: true },
                   label: { type: SchemaType.STRING, nullable: true },
                   value: { type: SchemaType.NUMBER, nullable: true },
                   max: { type: SchemaType.NUMBER, nullable: true },
                   unit: { type: SchemaType.STRING, nullable: true },
-                  action: { type: SchemaType.STRING, nullable: true },
-                  style: { type: SchemaType.STRING, nullable: true }
+                  style: { type: SchemaType.STRING, nullable: true },
+                  actions: {
+                    type: SchemaType.ARRAY,
+                    nullable: true,
+                    items: {
+                      type: SchemaType.OBJECT,
+                      properties: {
+                        label: { type: SchemaType.STRING },
+                        action: { type: SchemaType.STRING },
+                        payload: { type: SchemaType.STRING, nullable: true }
+                      }
+                    }
+                  }
                 }
               }
+              // We REMOVED the 'children' property here to stop the error loop.
             }
           }
         }
