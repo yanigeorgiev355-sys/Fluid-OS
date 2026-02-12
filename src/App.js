@@ -5,8 +5,8 @@ import A2UIRenderer from './A2UIRenderer';
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- THE FIXED SCHEMA ---
-// We explicitly define what a "child" component looks like to satisfy the API.
+// --- THE STRICT SCHEMA (With Enums) ---
+// We now force the AI to pick from our list. It CANNOT invent names anymore.
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -16,7 +16,11 @@ const RESPONSE_SCHEMA = {
       type: SchemaType.OBJECT,
       nullable: true,
       properties: {
-        type: { type: SchemaType.STRING },
+        // LOCK 1: The Main Tool must be a Card
+        type: { 
+          type: SchemaType.STRING,
+          enum: ["Card", "Text", "Gauge", "ButtonRow", "Chart"] 
+        },
         props: {
           type: SchemaType.OBJECT,
           properties: {
@@ -40,14 +44,17 @@ const RESPONSE_SCHEMA = {
           },
           nullable: true
         },
-        // FIX: We explicitly define the structure of children here
         children: {
           type: SchemaType.ARRAY,
           nullable: true,
           items: {
             type: SchemaType.OBJECT,
             properties: {
-              type: { type: SchemaType.STRING },
+              // LOCK 2: The Children must be valid components
+              type: { 
+                type: SchemaType.STRING,
+                enum: ["Card", "Text", "Gauge", "ButtonRow", "Chart"] 
+              },
               props: {
                 type: SchemaType.OBJECT,
                 nullable: true,
@@ -57,7 +64,10 @@ const RESPONSE_SCHEMA = {
                   content: { type: SchemaType.STRING, nullable: true },
                   label: { type: SchemaType.STRING, nullable: true },
                   value: { type: SchemaType.NUMBER, nullable: true },
-                  action: { type: SchemaType.STRING, nullable: true }
+                  max: { type: SchemaType.NUMBER, nullable: true },
+                  unit: { type: SchemaType.STRING, nullable: true },
+                  action: { type: SchemaType.STRING, nullable: true },
+                  style: { type: SchemaType.STRING, nullable: true }
                 }
               }
             }
@@ -72,7 +82,9 @@ const RESPONSE_SCHEMA = {
 const SYSTEM_PROMPT = `
 You are Neural OS. 
 - Be conversational.
-- Use the "tool" field ONLY if you need to render a UI widget (Tracker, Chart, etc).
+- Use the "tool" field ONLY if you need to render a UI widget.
+- PREFER the 'Gauge' component for tracking water/progress.
+- PREFER 'ButtonRow' for actions.
 - Otherwise set "tool" to null.
 `;
 
@@ -86,7 +98,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
 
-  // Auto-scroll to bottom
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
