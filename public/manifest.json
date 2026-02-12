@@ -1,0 +1,9 @@
+{
+  "short_name": "Fluid OS",
+  "name": "Fluid OS - Neural Interface",
+  "icons": [],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#ffffff",
+  "background_color": "#ffffff"
+}
