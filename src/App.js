@@ -3,9 +3,9 @@ import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, S
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
-// Using Flash for speed. If it hallucinates too much, we can switch to "gemini-2.0-pro"
-const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
+const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
 
+// 1. STRICT SCHEMA to force valid JSON
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -37,23 +37,20 @@ const RESPONSE_SCHEMA = {
 };
 
 const SYSTEM_PROMPT = `
-You are Fluid OS, a Disposable App Generator.
-Your goal is to create ephemeral, micro-tools for specific user tasks.
+You are Fluid OS.
+- If the user just says "hi" or asks a question, set "tool" to null.
+- If the user asks for a tool (e.g. "calculator", "tracker"), return a "tool" object.
 
 DESIGN SYSTEM (STITCH-LITE):
-You must build interfaces using ONLY these JSON blocks. 
-Do not write HTML. Write JSON that represents these blocks:
-
-1. "Header": { "label": "Main Title", "value": "Subtitle or Date", "icon": "Activity" }
+Use ONLY these blocks:
+1. "Header": { "label": "Title", "value": "Subtitle", "icon": "Activity" }
 2. "Stat": { "label": "Label", "value": "Value", "icon": "Zap", "variant": "primary" }
 3. "Btn": { "label": "Button Text", "onClick": "action_id", "variant": "primary" }
 4. "Text": { "label": "Body text", "value": "Bold Heading" }
 5. "Divider": {} 
 
-LOGIC RULES:
-- If the user is just chatting (e.g., "Hi", "Explain this"), set "tool" to null.
+LOGIC:
 - When a user clicks a button, calculate the new state and return the COMPLETE updated block list.
-- Keep apps focused. One screen, one specific job.
 `;
 
 export default function App() {
@@ -72,7 +69,6 @@ export default function App() {
   useEffect(() => { localStorage.setItem('neural_apps', JSON.stringify(apps)); }, [apps]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
-  // Rate Limit Countdown
   useEffect(() => {
     if (rateLimitTimer > 0) {
       const timer = setInterval(() => setRateLimitTimer(t => t - 1), 1000);
@@ -86,6 +82,27 @@ export default function App() {
     if (rateLimitTimer > 0) return; 
     const actionPrompt = `[USER CLICKED]: Button "${actionId}". Value: "${payload}".\nTASK: Update the interface blocks to reflect this change.`;
     handleSend(actionPrompt, true); 
+  };
+
+  // --- THE NUCLEAR PARSER ---
+  const robustJSONParse = (text) => {
+    try {
+      // 1. Try standard parse
+      return JSON.parse(text);
+    } catch (e) {
+      // 2. If that fails, extract the JSON object using Regex
+      // This looks for the first '{' and the last '}'
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          return JSON.parse(jsonMatch[0]);
+        } catch (e2) {
+          console.error("Regex Parse Failed");
+          return null;
+        }
+      }
+      return null;
+    }
   };
 
   const handleSend = async (manualInput = null, isSystemAction = false) => {
@@ -108,7 +125,7 @@ export default function App() {
         generationConfig: { 
           responseMimeType: "application/json", 
           responseSchema: RESPONSE_SCHEMA,
-          maxOutputTokens: 2000 
+          maxOutputTokens: 4000 
         } 
       });
 
@@ -129,42 +146,30 @@ export default function App() {
       const result = await chat.sendMessage(textToSend);
       const responseText = result.response.text();
       
-      let data;
-      try {
-        // --- BULLETPROOF PARSER V2 ---
-        // 1. Remove markdown code blocks
-        let cleanText = responseText.replace(/```json/g, '').replace(/```/g, '');
-        // 2. Find the first '{' and the last '}' to ignore conversational intro/outro
-        const firstBrace = cleanText.indexOf('{');
-        const lastBrace = cleanText.lastIndexOf('}');
-        
-        if (firstBrace !== -1 && lastBrace !== -1) {
-            cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-            data = JSON.parse(cleanText);
-        } else {
-            throw new Error("No JSON object found in response");
-        }
-      } catch (jsonError) {
-        console.error("JSON Parse Error:", jsonError, "Raw Text:", responseText);
-        data = { response: "I understood, but I had trouble drawing the interface. Please try again.", tool: null };
-      }
+      console.log("Raw AI Response:", responseText); // Debugging
 
-      if (data.response && !isSystemAction) {
-          setMessages(prev => [...prev, { role: 'model', text: data.response }]);
-      }
-      
-      if (data.tool) {
-        const newToolTitle = data.tool.title || activeApp?.title || "New App";
-        if (activeApp) {
-             setApps(prev => prev.map(app => 
-               app.id === activeAppId ? { ...app, blueprint: data.tool, title: newToolTitle } : app
-             ));
-        } else {
-             const newApp = { id: Date.now(), title: newToolTitle, blueprint: data.tool };
-             setApps(prev => [...prev, newApp]);
-             setActiveAppId(newApp.id);
-        }
-        if (!isSystemAction) setView('app'); 
+      const data = robustJSONParse(responseText);
+
+      if (!data) {
+          setMessages(prev => [...prev, { role: 'model', text: "I tried to build that, but I made a syntax error. Please ask again." }]);
+      } else {
+          if (data.response && !isSystemAction) {
+              setMessages(prev => [...prev, { role: 'model', text: data.response }]);
+          }
+          
+          if (data.tool) {
+            const newToolTitle = data.tool.title || activeApp?.title || "New App";
+            if (activeApp) {
+                setApps(prev => prev.map(app => 
+                  app.id === activeAppId ? { ...app, blueprint: data.tool, title: newToolTitle } : app
+                ));
+            } else {
+                const newApp = { id: Date.now(), title: newToolTitle, blueprint: data.tool };
+                setApps(prev => [...prev, newApp]);
+                setActiveAppId(newApp.id);
+            }
+            if (!isSystemAction) setView('app'); 
+          }
       }
     } catch (e) {
       if (e.message.includes('429')) {
@@ -196,7 +201,7 @@ export default function App() {
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden relative">
       
-      {/* --- VIEW 1: CHAT INTERFACE --- */}
+      {/* VIEW 1: CHAT */}
       <div className={`absolute inset-0 flex flex-col bg-white transition-transform duration-300 ${view === 'chat' ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-4 border-b flex justify-between bg-white z-10 shadow-sm">
           <span className="font-bold text-slate-900 flex items-center gap-2">
@@ -226,12 +231,12 @@ export default function App() {
             </div>
         )}
 
-        {/* INPUT AREA: 3 Rows, No auto-send on Enter */}
-        <div className="p-3 border-t bg-white flex gap-2 items-end">
+        {/* INPUT AREA: 3 Rows, Enter = New Line */}
+        <div className="p-3 border-t bg-white flex gap-2 items-end pb-8">
           <textarea 
             className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50 resize-none font-sans text-sm" 
             rows={3}
-            placeholder={rateLimitTimer > 0 ? "Waiting for cool down..." : "Describe an app to build..."} 
+            placeholder={rateLimitTimer > 0 ? "Waiting..." : "Describe an app..."} 
             value={input} 
             onChange={(e) => setInput(e.target.value)} 
             disabled={rateLimitTimer > 0} 
@@ -239,14 +244,14 @@ export default function App() {
           <button 
             onClick={() => handleSend()} 
             disabled={rateLimitTimer > 0 || loading} 
-            className="bg-blue-600 text-white p-3 mb-1 rounded-full shadow-lg disabled:bg-slate-300 hover:bg-blue-700 transition-colors"
+            className="bg-blue-600 text-white p-3 mb-4 rounded-full shadow-lg disabled:bg-slate-300 hover:bg-blue-700 transition-colors"
           >
             {loading ? <Loader2 size={20} className="animate-spin"/> : <Send size={20}/>}
           </button>
         </div>
       </div>
 
-      {/* --- VIEW 2: APP STAGE --- */}
+      {/* VIEW 2: APP */}
       <div className={`absolute inset-0 flex flex-col bg-slate-50 transition-transform duration-300 ${view === 'app' ? 'translate-x-0' : 'translate-x-full'}`}>
         <div className="p-4 bg-white/80 backdrop-blur-md z-10 sticky top-0 flex justify-between items-center border-b border-slate-100">
           <span className="font-bold text-slate-800 flex items-center gap-2">
@@ -270,7 +275,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* --- VIEW 3: THE DOCK --- */}
+      {/* VIEW 3: DOCK */}
       <div className={`absolute inset-0 bg-slate-900/95 backdrop-blur-xl z-40 transition-opacity duration-300 ${view === 'dock' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
         <div className="p-6 h-full flex flex-col">
           <div className="flex justify-between items-center text-white mb-8">
@@ -302,7 +307,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* TOGGLE BUTTON: Fixed to be higher up */}
+      {/* TOGGLE BUTTON: Fixed to be MUCH higher up (bottom-48) */}
       {view !== 'dock' && (
         <button 
             onClick={() => setView(view === 'chat' ? 'app' : 'chat')} 
@@ -317,7 +322,6 @@ export default function App() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <form onSubmit={saveKey} className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl relative overflow-hidden">
                 <h2 className="text-2xl font-bold mb-2 text-slate-900">Unlock Fluid OS</h2>
-                <p className="text-slate-500 text-sm mb-6">Enter your Google Gemini API Key.</p>
                 <input 
                     name="key" 
                     type="password" 
