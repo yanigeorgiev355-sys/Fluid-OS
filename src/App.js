@@ -5,9 +5,6 @@ import A2UIRenderer from './A2UIRenderer';
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- THE UNIVERSAL SCHEMA ---
-// Instead of "Card" or "Gauge", we allow generic HTML tags.
-// This allows the AI to build ANYTHING.
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -18,24 +15,22 @@ const RESPONSE_SCHEMA = {
       nullable: true,
       properties: {
         title: { type: SchemaType.STRING },
-        // The Root Element (e.g., a "div" container)
         root: {
           type: SchemaType.OBJECT,
           properties: {
-            tag: { type: SchemaType.STRING }, // e.g., "div", "button", "h1"
+            tag: { type: SchemaType.STRING }, 
             props: {
               type: SchemaType.OBJECT,
               properties: {
-                className: { type: SchemaType.STRING }, // Tailwind Classes
-                text: { type: SchemaType.STRING, nullable: true }, // For text nodes
-                src: { type: SchemaType.STRING, nullable: true }, // For images
-                onClick: { type: SchemaType.STRING, nullable: true }, // Action ID
-                placeholder: { type: SchemaType.STRING, nullable: true }, // For inputs
-                value: { type: SchemaType.STRING, nullable: true } // For inputs
+                className: { type: SchemaType.STRING }, 
+                text: { type: SchemaType.STRING, nullable: true }, 
+                src: { type: SchemaType.STRING, nullable: true }, 
+                onClick: { type: SchemaType.STRING, nullable: true }, 
+                placeholder: { type: SchemaType.STRING, nullable: true }, 
+                value: { type: SchemaType.STRING, nullable: true } 
               },
               nullable: true
             },
-            // Recursive Children: Elements inside elements
             children: {
               type: SchemaType.ARRAY,
               nullable: true,
@@ -77,16 +72,22 @@ const RESPONSE_SCHEMA = {
   required: ["thought", "response"]
 };
 
-// We teach the AI to act like a Frontend Developer
+// --- FIX 1: THE SENIOR DEVELOPER PROMPT ---
 const SYSTEM_PROMPT = `
 You are Neural OS.
-- Be conversational.
-- To create a UI, return a "tool" object.
-- The "tool" is a Virtual DOM tree.
+- Be conversational and concise.
+- To create a UI, return a "tool" object (Virtual DOM).
 - Use standard HTML tags: "div", "h1", "p", "button", "img", "input".
-- Use TAILWIND CSS for the "className" prop to style everything.
-- Make it look beautiful, like a modern app (Stitch style).
-- If the user adds data, CALCULATE the new state and return the updated Virtual DOM.
+
+*** CRITICAL DESIGN RULES (SENIOR DEV MODE) ***
+1. VISUAL STYLE: Modern, clean, "Apple-like" aesthetic. Use Tailwind CSS.
+2. EFFICIENCY: Use the FEWEST HTML elements possible to achieve the design.
+   - BAD: <div class="bg-white"><div class="p-4"><div class="shadow">...
+   - GOOD: <div class="bg-white p-4 shadow-lg rounded-2xl">...
+3. CONTENT: Do NOT generate legal text, trademarks, massive lists, or decorative SVGs.
+   - Keep text short and punchy.
+   - If a Water Tracker needs 1 button, do NOT make 50.
+4. LOGIC: If updating data, return the FULL updated Virtual DOM.
 `;
 
 export default function App() {
@@ -118,7 +119,13 @@ export default function App() {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ 
         model: GEMINI_MODEL_VERSION,
-        generationConfig: { responseMimeType: "application/json", responseSchema: RESPONSE_SCHEMA } 
+        generationConfig: { 
+          responseMimeType: "application/json", 
+          responseSchema: RESPONSE_SCHEMA,
+          // --- FIX 2: THE TOKEN BUDGET ---
+          // 4000 tokens is enough for a rich app, but prevents "novels"
+          maxOutputTokens: 4000 
+        } 
       });
 
       let dynamicPrompt = SYSTEM_PROMPT;
@@ -131,7 +138,21 @@ export default function App() {
 
       const chat = model.startChat({ history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] });
       const result = await chat.sendMessage(input);
-      const data = JSON.parse(result.response.text());
+      
+      // --- FIX 3: THE AIRBAG (JSON RESCUE) ---
+      let data;
+      try {
+        const text = result.response.text();
+        // Safety check for cut-off JSON
+        if (!text.trim().endsWith("}")) {
+            throw new Error("Response truncated (Token Limit Hit). Attempting manual fix is risky.");
+        }
+        data = JSON.parse(text);
+      } catch (jsonError) {
+        console.error("JSON Crash:", jsonError);
+        // Fallback message so the user knows what happened
+        data = { response: "I tried to build something too complex and ran out of memory. Please ask for a simpler version or a specific feature.", tool: null };
+      }
       
       setMessages(prev => [...prev, { role: 'model', text: data.response }]);
       
@@ -149,7 +170,7 @@ export default function App() {
         setView('app'); 
       }
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'system', text: "Error: " + e.message }]);
+      setMessages(prev => [...prev, { role: 'system', text: "System Error: " + e.message }]);
     }
     setLoading(false);
   };
