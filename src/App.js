@@ -3,9 +3,9 @@ import { Send, Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
-const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
+// --- FIX 1: Switched back to the working 2.5 version ---
+const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- SCHEMA (Unchanged) ---
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -96,8 +96,6 @@ export default function App() {
         generationConfig: { responseMimeType: "application/json", responseSchema: RESPONSE_SCHEMA } 
       });
 
-      // --- SUPERPOWER 1: READ (Context Injection) ---
-      // We dump the raw data of the current app into the prompt so the AI can "see" it.
       let dynamicPrompt = SYSTEM_PROMPT;
       if (activeApp) {
         dynamicPrompt += `\n[CURRENT APP STATE]:
@@ -116,18 +114,14 @@ export default function App() {
       
       setMessages(prev => [...prev, { role: 'model', text: data.response }]);
       
-      // --- SUPERPOWER 2: WRITE (Smart Update) ---
       if (data.tool) {
         const newToolTitle = data.tool.props?.title || "New App";
         
-        // Does this app already exist? (Check by ID or Title)
-        // If we are looking at an app, we assume we are updating IT.
         if (activeApp) {
              setApps(prev => prev.map(app => 
                app.id === activeAppId ? { ...app, blueprint: data.tool, title: newToolTitle } : app
              ));
         } else {
-             // Create fresh
              const newApp = { id: Date.now(), title: newToolTitle, blueprint: data.tool };
              setApps(prev => [...prev, newApp]);
              setActiveAppId(newApp.id);
@@ -225,11 +219,11 @@ export default function App() {
         </div>
       </div>
 
-      {/* --- TOGGLE BUTTON --- */}
+      {/* --- FIX 2: MOVED BUTTON UP (bottom-32 instead of bottom-8) --- */}
       {view !== 'dock' && (
         <button 
           onClick={() => setView(view === 'chat' ? 'app' : 'chat')}
-          className="fixed bottom-8 right-6 bg-slate-900 text-white p-4 rounded-full shadow-2xl z-30 hover:scale-110 transition-transform active:scale-95"
+          className="fixed bottom-32 right-6 bg-slate-900 text-white p-4 rounded-full shadow-2xl z-30 hover:scale-110 transition-transform active:scale-95"
         >
           {view === 'chat' ? <Smartphone size={24} /> : <MessageSquare size={24} />}
         </button>
