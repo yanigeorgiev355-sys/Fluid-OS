@@ -1,0 +1,226 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, Send, AlertTriangle, Loader2 } from 'lucide-react';
+import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
+import A2UIRenderer from './A2UIRenderer';
+
+const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
+
+const RESPONSE_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    thought: { type: SchemaType.STRING },
+    response: { type: SchemaType.STRING },
+    tool: {
+      type: SchemaType.OBJECT,
+      nullable: true,
+      properties: {
+        title: { type: SchemaType.STRING },
+        blocks: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              t: { type: SchemaType.STRING, enum: ["Header", "Stat", "Btn", "Text", "Divider"] }, 
+              label: { type: SchemaType.STRING, nullable: true },
+              value: { type: SchemaType.STRING, nullable: true },
+              icon: { type: SchemaType.STRING, nullable: true },
+              variant: { type: SchemaType.STRING, nullable: true },
+              onClick: { type: SchemaType.STRING, nullable: true }
+            }
+          }
+        }
+      }
+    }
+  },
+  required: ["thought", "response"]
+};
+
+const SYSTEM_PROMPT = `
+You are Neural OS.
+- Be conversational.
+- To build a tool, return a "tool" object with a FLAT LIST of "blocks".
+- LOGIC: When the user performs an action (like "add_250"), you must CALCULATE the new state and return the completely updated list of blocks.
+
+AVAILABLE BLOCKS:
+1. "Header": { label: "Hydration", icon: "Droplets" }
+2. "Stat": { label: "Today", value: "800ml" }
+3. "Btn": { label: "+250ml", variant: "primary", onClick: "add_250" }
+4. "Text": { label: "Keep going!" }
+`;
+
+export default function App() {
+  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
+  const [apps, setApps] = useState(() => JSON.parse(localStorage.getItem('neural_apps') || '[]'));
+  const [messages, setMessages] = useState([{ role: 'model', text: "Ready. What shall we build?" }]);
+  const [input, setInput] = useState('');
+  
+  const [activeAppId, setActiveAppId] = useState(null); 
+  const [view, setView] = useState('chat'); 
+  const [loading, setLoading] = useState(false);
+  const [rateLimitTimer, setRateLimitTimer] = useState(0); // 0 = Okay, >0 = Penalty Box
+  const [settingsOpen, setSettingsOpen] = useState(!apiKey);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => { localStorage.setItem('neural_apps', JSON.stringify(apps)); }, [apps]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
+
+  // COUNTDOWN TIMER FOR RATE LIMIT
+  useEffect(() => {
+    if (rateLimitTimer > 0) {
+      const timer = setInterval(() => setRateLimitTimer(t => t - 1), 1000);
+      return () => clearInterval(timer);
+    }
+  }, [rateLimitTimer]);
+
+  const activeApp = apps.find(a => a.id === activeAppId);
+
+  const handleAppAction = async (actionId, payload) => {
+    if (rateLimitTimer > 0) return; // Block clicks if penalized
+    const actionPrompt = `[SYSTEM EVENT]: User clicked button "${actionId}". Value: "${payload}". Update the app state based on this logic.`;
+    handleSend(actionPrompt, true); 
+  };
+
+  const handleSend = async (manualInput = null, isSystemAction = false) => {
+    if (rateLimitTimer > 0) return; // STOP if penalized
+    
+    const textToSend = manualInput || input;
+    if (!textToSend.trim() || !apiKey) return;
+    
+    // Only show user text, NEVER show system prompts
+    if (!isSystemAction) {
+        setMessages(prev => [...prev, { role: 'user', text: textToSend }]);
+        setInput('');
+    }
+    
+    setLoading(true);
+
+    try {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ 
+        model: GEMINI_MODEL_VERSION,
+        generationConfig: { 
+          responseMimeType: "application/json", 
+          responseSchema: RESPONSE_SCHEMA,
+          maxOutputTokens: 1000 
+        } 
+      });
+
+      let dynamicPrompt = SYSTEM_PROMPT;
+      if (activeApp) {
+        dynamicPrompt += `\n[CURRENT APP STATE]:
+        Title: "${activeApp.title}"
+        Current Blocks JSON: ${JSON.stringify(activeApp.blueprint.blocks)}
+        INSTRUCTION: Apply action "${textToSend}". Return NEW blocks.`;
+      }
+
+      const chat = model.startChat({ history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] });
+      const result = await chat.sendMessage(textToSend);
+      
+      let data = JSON.parse(result.response.text());
+
+      // Only show model response if it's NOT a tool update (keeps chat clean)
+      if (!data.tool && !isSystemAction) {
+          setMessages(prev => [...prev, { role: 'model', text: data.response }]);
+      }
+      
+      if (data.tool) {
+        const newToolTitle = data.tool.title || activeApp?.title || "New App";
+        if (activeApp) {
+             setApps(prev => prev.map(app => 
+               app.id === activeAppId ? { ...app, blueprint: data.tool, title: newToolTitle } : app
+             ));
+        } else {
+             const newApp = { id: Date.now(), title: newToolTitle, blueprint: data.tool };
+             setApps(prev => [...prev, newApp]);
+             setActiveAppId(newApp.id);
+        }
+        if (!isSystemAction) setView('app'); 
+      }
+    } catch (e) {
+      if (e.message.includes('429')) {
+        // ACTIVATE PENALTY BOX
+        setRateLimitTimer(30); 
+      } else {
+        setMessages(prev => [...prev, { role: 'system', text: "Error: " + e.message }]);
+      }
+    }
+    setLoading(false);
+  };
+
+  const saveKey = (e) => { e.preventDefault(); const key = e.target.elements.key.value; localStorage.setItem('gemini_key', key); setApiKey(key); setSettingsOpen(false); };
+  const deleteApp = (id, e) => { e.stopPropagation(); setApps(prev => prev.filter(a => a.id !== id)); if (activeAppId === id) setActiveAppId(null); };
+
+  return (
+    <div className="flex h-screen bg-slate-50 font-sans overflow-hidden relative">
+      {/* VIEW 1: CHAT */}
+      <div className={`absolute inset-0 flex flex-col bg-white transition-transform duration-300 ${view === 'chat' ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="p-4 border-b flex justify-between bg-white z-10 shadow-sm">
+          <span className="font-bold text-slate-800 flex items-center gap-2"><Activity size={20} className="text-blue-600"/> Neural Chat</span>
+          <button onClick={() => setSettingsOpen(true)}><Settings size={20} className="text-slate-400"/></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.map((m, i) => (
+            <div key={i} className={`p-3 rounded-xl max-w-[85%] ${m.role === 'user' ? 'bg-blue-600 text-white self-end ml-auto' : m.role === 'system' ? 'text-xs text-red-400 text-center' : 'bg-slate-100 text-slate-800'}`}>{m.text}</div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+        
+        {/* PENALTY BOX MESSAGE */}
+        {rateLimitTimer > 0 && (
+            <div className="bg-orange-50 text-orange-600 text-xs p-2 text-center flex items-center justify-center gap-2 animate-pulse">
+                <AlertTriangle size={14}/> API Cooldown: Wait {rateLimitTimer}s
+            </div>
+        )}
+
+        <div className="p-3 border-t bg-white flex gap-2">
+          <input className="flex-1 bg-slate-100 rounded-full px-4 py-3 focus:outline-none disabled:opacity-50" placeholder={rateLimitTimer > 0 ? "Cooling down..." : "Type a message..."} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} disabled={rateLimitTimer > 0} />
+          <button onClick={() => handleSend()} disabled={rateLimitTimer > 0} className="bg-blue-600 text-white p-3 rounded-full shadow-lg disabled:bg-slate-400"><Send size={20}/></button>
+        </div>
+      </div>
+
+      {/* VIEW 2: APP STAGE */}
+      <div className={`absolute inset-0 flex flex-col bg-slate-100 transition-transform duration-300 ${view === 'app' ? 'translate-x-0' : 'translate-x-full'}`}>
+        <div className="p-4 border-b bg-white z-10 shadow-sm flex justify-between items-center">
+          <span className="font-bold text-slate-800 flex items-center gap-2"><Smartphone size={20} className="text-green-600"/> {activeApp ? activeApp.title : "No App"}</span>
+          <button onClick={() => setView('dock')} className="p-2 hover:bg-slate-100 rounded-full text-blue-600"><Grid size={24} /></button>
+        </div>
+        <div className="flex-1 p-6 overflow-y-auto flex items-center justify-center relative">
+          
+          {/* UPDATE SPINNER */}
+          {loading && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-medium z-50 flex items-center gap-2 shadow-xl">
+                <Loader2 size={14} className="animate-spin"/> Updating...
+            </div>
+          )}
+
+          {activeApp && <div className="w-full max-w-md"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} disabled={rateLimitTimer > 0} /></div>}
+        </div>
+      </div>
+
+      {/* VIEW 3: DOCK */}
+      <div className={`absolute inset-0 bg-slate-800/90 backdrop-blur-md z-40 transition-opacity duration-300 ${view === 'dock' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+        <div className="p-6 h-full flex flex-col">
+          <div className="flex justify-between items-center text-white mb-8"><h2 className="text-2xl font-bold">Apps</h2><button onClick={() => setView(activeApp ? 'app' : 'chat')}><X size={28}/></button></div>
+          <div className="grid grid-cols-2 gap-4 overflow-y-auto">
+            <button onClick={() => { setActiveAppId(null); setView('chat'); }} className="bg-white/10 hover:bg-white/20 border-2 border-dashed border-white/30 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 text-white transition"><div className="bg-blue-600 p-3 rounded-full"><Plus size={24}/></div><span className="font-medium">New App</span></button>
+            {apps.map(app => (
+              <div key={app.id} onClick={() => { setActiveAppId(app.id); setView('app'); }} className="bg-white p-6 rounded-2xl shadow-lg relative cursor-pointer hover:scale-105 transition-transform group">
+                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl mb-3 shadow-md"></div>
+                <h3 className="font-bold text-slate-800 truncate">{app.title}</h3>
+                <button onClick={(e) => deleteApp(app.id, e)} className="absolute top-3 right-3 text-slate-300 hover:text-red-500"><Trash2 size={18}/></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* TOGGLE BUTTON */}
+      {view !== 'dock' && (
+        <button onClick={() => setView(view === 'chat' ? 'app' : 'chat')} className="fixed bottom-32 right-6 bg-slate-900 text-white p-4 rounded-full shadow-2xl z-30 hover:scale-110 transition-transform active:scale-95">
+          {view === 'chat' ? <Smartphone size={24} /> : <MessageSquare size={24} />}
+        </button>
+      )}
+      {settingsOpen && <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50"><form onSubmit={saveKey} className="bg-white p-6 rounded-2xl w-80"><h2 className="text-lg font-bold mb-4">API Key</h2><input name="key" type="password" placeholder="AIza..." className="w-full border p-2 rounded mb-4" /><button type="submit" className="w-full bg-blue-600 text-white py-2 rounded font-bold">Start</button></form></div>}
+    </div>
+  );
+}
