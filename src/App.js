@@ -3,7 +3,7 @@ import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, S
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
-const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
+const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
