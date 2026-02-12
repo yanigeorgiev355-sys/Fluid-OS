@@ -5,6 +5,7 @@ import A2UIRenderer from './A2UIRenderer';
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
+// --- MINIFIED SCHEMA ---
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -18,46 +19,46 @@ const RESPONSE_SCHEMA = {
         root: {
           type: SchemaType.OBJECT,
           properties: {
-            tag: { type: SchemaType.STRING }, 
-            props: {
+            t: { type: SchemaType.STRING }, // tag or stamp name
+            p: {
               type: SchemaType.OBJECT,
               properties: {
-                className: { type: SchemaType.STRING }, 
-                text: { type: SchemaType.STRING, nullable: true }, 
-                src: { type: SchemaType.STRING, nullable: true }, 
-                onClick: { type: SchemaType.STRING, nullable: true }, 
-                placeholder: { type: SchemaType.STRING, nullable: true }, 
-                value: { type: SchemaType.STRING, nullable: true } 
+                s: { type: SchemaType.STRING }, // style/className
+                x: { type: SchemaType.STRING, nullable: true }, // text
+                n: { type: SchemaType.STRING, nullable: true }, // icon name
+                k: { type: SchemaType.STRING, nullable: true }, // action key
+                h: { type: SchemaType.STRING, nullable: true }, // placeholder
+                v: { type: SchemaType.STRING, nullable: true }  // value
               },
               nullable: true
             },
-            children: {
+            c: {
               type: SchemaType.ARRAY,
               nullable: true,
               items: {
                 type: SchemaType.OBJECT,
                 properties: {
-                  tag: { type: SchemaType.STRING },
-                  props: {
+                  t: { type: SchemaType.STRING },
+                  p: {
                     type: SchemaType.OBJECT,
                     properties: {
-                      className: { type: SchemaType.STRING },
-                      text: { type: SchemaType.STRING, nullable: true },
-                      src: { type: SchemaType.STRING, nullable: true },
-                      onClick: { type: SchemaType.STRING, nullable: true },
-                      placeholder: { type: SchemaType.STRING, nullable: true },
-                      value: { type: SchemaType.STRING, nullable: true }
+                      s: { type: SchemaType.STRING },
+                      x: { type: SchemaType.STRING, nullable: true },
+                      n: { type: SchemaType.STRING, nullable: true }, // icon name
+                      k: { type: SchemaType.STRING, nullable: true },
+                      h: { type: SchemaType.STRING, nullable: true },
+                      v: { type: SchemaType.STRING, nullable: true }
                     },
                     nullable: true
                   },
-                  children: {
+                  c: {
                     type: SchemaType.ARRAY,
                     nullable: true,
                     items: {
                       type: SchemaType.OBJECT,
                       properties: {
-                         tag: { type: SchemaType.STRING },
-                         props: { type: SchemaType.OBJECT, nullable: true, properties: { className: {type: SchemaType.STRING}, text: {type: SchemaType.STRING} } }
+                         t: { type: SchemaType.STRING },
+                         p: { type: SchemaType.OBJECT, nullable: true, properties: { s: {type: SchemaType.STRING}, x: {type: SchemaType.STRING} } }
                       }
                     }
                   }
@@ -72,22 +73,22 @@ const RESPONSE_SCHEMA = {
   required: ["thought", "response"]
 };
 
-// --- FIX 1: THE SENIOR DEVELOPER PROMPT ---
 const SYSTEM_PROMPT = `
 You are Neural OS.
 - Be conversational and concise.
-- To create a UI, return a "tool" object (Virtual DOM).
-- Use standard HTML tags: "div", "h1", "p", "button", "img", "input".
+- Return a "tool" object (Virtual DOM).
 
-*** CRITICAL DESIGN RULES (SENIOR DEV MODE) ***
-1. VISUAL STYLE: Modern, clean, "Apple-like" aesthetic. Use Tailwind CSS.
-2. EFFICIENCY: Use the FEWEST HTML elements possible to achieve the design.
-   - BAD: <div class="bg-white"><div class="p-4"><div class="shadow">...
-   - GOOD: <div class="bg-white p-4 shadow-lg rounded-2xl">...
-3. CONTENT: Do NOT generate legal text, trademarks, massive lists, or decorative SVGs.
-   - Keep text short and punchy.
-   - If a Water Tracker needs 1 button, do NOT make 50.
-4. LOGIC: If updating data, return the FULL updated Virtual DOM.
+*** EFFICIENCY RULES (HYBRID MODE) ***
+Use these PRE-MADE COMPONENTS to save space and look professional:
+- "Card": A white content container (replaces div class="bg-white shadow...").
+- "Btn": A primary blue button.
+- "BtnSec": A secondary gray button.
+- "H1": A large bold header.
+- "Lbl": A small uppercase label.
+- "Icon": Renders an icon. Use "n" prop for name (e.g. { "t": "Icon", "p": { "n": "Droplets" } }).
+
+Use raw HTML ("div", "img", "input", "flex") for layout INSIDE cards.
+Use Tailwind CSS ("s" prop) for raw HTML.
 `;
 
 export default function App() {
@@ -122,9 +123,7 @@ export default function App() {
         generationConfig: { 
           responseMimeType: "application/json", 
           responseSchema: RESPONSE_SCHEMA,
-          // --- FIX 2: THE TOKEN BUDGET ---
-          // 4000 tokens is enough for a rich app, but prevents "novels"
-          maxOutputTokens: 4000 
+          maxOutputTokens: 8000
         } 
       });
 
@@ -139,19 +138,13 @@ export default function App() {
       const chat = model.startChat({ history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] });
       const result = await chat.sendMessage(input);
       
-      // --- FIX 3: THE AIRBAG (JSON RESCUE) ---
       let data;
       try {
         const text = result.response.text();
-        // Safety check for cut-off JSON
-        if (!text.trim().endsWith("}")) {
-            throw new Error("Response truncated (Token Limit Hit). Attempting manual fix is risky.");
-        }
         data = JSON.parse(text);
       } catch (jsonError) {
         console.error("JSON Crash:", jsonError);
-        // Fallback message so the user knows what happened
-        data = { response: "I tried to build something too complex and ran out of memory. Please ask for a simpler version or a specific feature.", tool: null };
+        data = { response: "I ran out of memory. Try asking for something simpler.", tool: null };
       }
       
       setMessages(prev => [...prev, { role: 'model', text: data.response }]);
