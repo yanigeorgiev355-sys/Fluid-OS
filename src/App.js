@@ -5,9 +5,7 @@ import A2UIRenderer from './A2UIRenderer';
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- THE FLAT SCHEMA (Bulletproof) ---
-// No nesting. Just a list of blocks.
-// This is impossible for the API to reject because it has no depth.
+// --- THE FLAT SCHEMA (Proven Stable) ---
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -18,15 +16,12 @@ const RESPONSE_SCHEMA = {
       nullable: true,
       properties: {
         title: { type: SchemaType.STRING },
-        layout: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } }, // e.g. ["Header", "Stat", "Button"]
-        // We put all data in a flat list of blocks
         blocks: {
           type: SchemaType.ARRAY,
           items: {
             type: SchemaType.OBJECT,
             properties: {
               t: { type: SchemaType.STRING, enum: ["Header", "Stat", "Btn", "Text", "Divider", "Input"] }, 
-              // We flatten the props. No 'p' object. Direct properties.
               label: { type: SchemaType.STRING, nullable: true },
               value: { type: SchemaType.STRING, nullable: true },
               icon: { type: SchemaType.STRING, nullable: true },
@@ -45,20 +40,20 @@ const SYSTEM_PROMPT = `
 You are Neural OS.
 - Be conversational.
 - To build a tool, return a "tool" object with a FLAT LIST of "blocks".
-- Do not nest components. Just list them in order from top to bottom.
+- LOGIC: When the user performs an action (like "add_250"), you must CALCULATE the new state and return the completely updated list of blocks.
 
 AVAILABLE BLOCKS:
-1. "Header": { label: "My Water", icon: "Droplets" }
-2. "Stat": { label: "Drank", value: "500ml", icon: "Cup" }
-3. "Btn": { label: "Add Water", variant: "primary", onClick: "add_250" }
-4. "Text": { label: "Keep it up!" }
-5. "Divider": {}
+1. "Header": { label: "Hydration", icon: "Droplets" }
+2. "Stat": { label: "Today", value: "800ml" }
+3. "Btn": { label: "+250ml", variant: "primary", onClick: "add_250" }
+4. "Text": { label: "Keep going!" }
 
-Example for Water Tracker:
+Example Water Tracker:
 blocks: [
-  { t: "Header", label: "Hydration", icon: "Droplets" },
-  { t: "Stat", label: "Today", value: "800ml" },
-  { t: "Btn", label: "+250ml", variant: "primary", onClick: "add_water" }
+  { t: "Header", label: "Water Log", icon: "Droplets" },
+  { t: "Stat", label: "Intake", value: "0ml" },
+  { t: "Btn", label: "Drink Cup (250ml)", variant: "primary", onClick: "add_250" },
+  { t: "Btn", label: "Reset", variant: "secondary", onClick: "reset" }
 ]
 `;
 
@@ -79,12 +74,26 @@ export default function App() {
 
   const activeApp = apps.find(a => a.id === activeAppId);
 
-  const handleSend = async () => {
-    if (!input.trim() || !apiKey) return;
+  // --- THE NEW ACTION HANDLER (Connecting Nerves) ---
+  const handleAppAction = async (actionId, payload) => {
+    // We treat a button click as a "System Message" to the AI
+    const actionPrompt = `[SYSTEM EVENT]: User clicked button "${actionId}". Value: "${payload}". Update the app state based on this logic.`;
+    handleSend(actionPrompt, true); // true = hidden message (don't clutter chat)
+  };
+
+  const handleSend = async (manualInput = null, isSystemAction = false) => {
+    const textToSend = manualInput || input;
+    if (!textToSend.trim() || !apiKey) return;
     
-    const newMsgs = [...messages, { role: 'user', text: input }];
-    setMessages(newMsgs);
-    setInput('');
+    // Only show user messages in UI, hide system action prompts to keep chat clean
+    if (!isSystemAction) {
+        setMessages(prev => [...prev, { role: 'user', text: textToSend }]);
+        setInput('');
+    } else {
+        // Optional: Show a small "Processing..." indicator in chat
+        setMessages(prev => [...prev, { role: 'system', text: `Processing action: ${textToSend.split(':')[1]}...` }]);
+    }
+    
     setLoading(true);
 
     try {
@@ -94,38 +103,45 @@ export default function App() {
         generationConfig: { 
           responseMimeType: "application/json", 
           responseSchema: RESPONSE_SCHEMA,
-          maxOutputTokens: 1000 // Very efficient schema, small token count needed
+          maxOutputTokens: 1000 
         } 
       });
 
       let dynamicPrompt = SYSTEM_PROMPT;
+      
+      // CONTEXT INJECTION: We MUST tell the AI what the *current* numbers are,
+      // or it will assume 0ml every time.
       if (activeApp) {
-        dynamicPrompt += `\n[CURRENT APP STATE]:
+        dynamicPrompt += `\n[CURRENT APP STATE - IMPORTANT]:
         Title: "${activeApp.title}"
-        Data: ${JSON.stringify(activeApp.blueprint)}
-        INSTRUCTION: Return the FULL updated list of blocks.`;
+        Current Blocks JSON: ${JSON.stringify(activeApp.blueprint.blocks)}
+        
+        INSTRUCTION: Read the 'Current Blocks' above. Apply the action "${textToSend}". Return the NEW updated blocks.`;
       }
 
       const chat = model.startChat({ history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] });
-      const result = await chat.sendMessage(input);
+      const result = await chat.sendMessage(textToSend);
       
       let data;
       try {
         data = JSON.parse(result.response.text());
       } catch (jsonError) {
         console.error("JSON Crash:", jsonError);
-        data = { response: "I had trouble building that. Please try again.", tool: null };
+        data = { response: "Calculation error. Try again.", tool: null };
       }
       
       setMessages(prev => [...prev, { role: 'model', text: data.response }]);
       
       if (data.tool) {
-        const newToolTitle = data.tool.title || "New App";
+        const newToolTitle = data.tool.title || activeApp?.title || "New App";
+        
         if (activeApp) {
+             // UPDATE existing app (This makes the numbers change!)
              setApps(prev => prev.map(app => 
                app.id === activeAppId ? { ...app, blueprint: data.tool, title: newToolTitle } : app
              ));
         } else {
+             // CREATE new app
              const newApp = { id: Date.now(), title: newToolTitle, blueprint: data.tool };
              setApps(prev => [...prev, newApp]);
              setActiveAppId(newApp.id);
@@ -133,7 +149,7 @@ export default function App() {
         setView('app'); 
       }
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'system', text: "System Error: " + e.message }]);
+      setMessages(prev => [...prev, { role: 'system', text: "Error: " + e.message }]);
     }
     setLoading(false);
   };
@@ -151,14 +167,14 @@ export default function App() {
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.map((m, i) => (
-            <div key={i} className={`p-3 rounded-xl max-w-[85%] ${m.role === 'user' ? 'bg-blue-600 text-white self-end ml-auto' : 'bg-slate-100 text-slate-800'}`}>{m.text}</div>
+            <div key={i} className={`p-3 rounded-xl max-w-[85%] ${m.role === 'user' ? 'bg-blue-600 text-white self-end ml-auto' : m.role === 'system' ? 'text-xs text-slate-400 text-center italic' : 'bg-slate-100 text-slate-800'}`}>{m.text}</div>
           ))}
           {loading && <div className="text-slate-400 text-sm ml-4 animate-pulse">Thinking...</div>}
           <div ref={messagesEndRef} />
         </div>
         <div className="p-3 border-t bg-white flex gap-2">
           <input className="flex-1 bg-slate-100 rounded-full px-4 py-3 focus:outline-none" placeholder="Type a message..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} />
-          <button onClick={handleSend} className="bg-blue-600 text-white p-3 rounded-full shadow-lg"><Send size={20}/></button>
+          <button onClick={() => handleSend()} className="bg-blue-600 text-white p-3 rounded-full shadow-lg"><Send size={20}/></button>
         </div>
       </div>
 
@@ -169,7 +185,15 @@ export default function App() {
           <button onClick={() => setView('dock')} className="p-2 hover:bg-slate-100 rounded-full text-blue-600"><Grid size={24} /></button>
         </div>
         <div className="flex-1 p-6 overflow-y-auto flex items-center justify-center">
-          {activeApp && <div className="w-full max-w-md"><A2UIRenderer blueprint={activeApp.blueprint} onAction={(a, p) => alert(`Action: ${a}, Value: ${p}`)} /></div>}
+          {/* --- HERE IS THE CONNECTION --- */}
+          {activeApp && (
+            <div className="w-full max-w-md">
+              <A2UIRenderer 
+                blueprint={activeApp.blueprint} 
+                onAction={handleAppAction} 
+              />
+            </div>
+          )}
         </div>
       </div>
 
