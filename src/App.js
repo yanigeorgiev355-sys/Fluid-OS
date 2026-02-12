@@ -3,7 +3,10 @@ import { Send, Menu, Settings, X, Activity, Sparkles } from 'lucide-react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
-// --- SYSTEM PROMPT (The Instructions for Gemini) ---
+// --- CONFIGURATION (Change Version Here) ---
+const GEMINI_MODEL_VERSION = "gemini-2.5-flash-latest"; 
+
+// --- SYSTEM PROMPT ---
 const SYSTEM_PROMPT = `
 You are an Agentic OS. You DO NOT write React code. You respond in JSON format ONLY.
 If the user needs a tool (tracker, chart, list), output a JSON object with this structure:
@@ -31,7 +34,7 @@ export default function App() {
   const [tools, setTools] = useState([]); 
   const [loading, setLoading] = useState(false);
 
-  // --- HANDLE SENDING MESSAGE (Gemini Logic) ---
+  // --- HANDLE SENDING MESSAGE ---
   const handleSend = async () => {
     if (!input.trim() || !apiKey) return;
     
@@ -43,8 +46,10 @@ export default function App() {
     try {
       // 1. Initialize Gemini
       const genAI = new GoogleGenerativeAI(apiKey);
+      
+      // USE THE VERSION DEFINED AT THE TOP
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
+        model: GEMINI_MODEL_VERSION,
         generationConfig: { responseMimeType: "application/json" } 
       });
 
@@ -60,7 +65,7 @@ export default function App() {
       const result = await chat.sendMessage(input);
       const responseText = result.response.text();
       
-      console.log("Gemini Raw Response:", responseText); // For debugging
+      console.log("Gemini Raw Response:", responseText); 
       const responseContent = JSON.parse(responseText);
       
       // 4. Handle the AI response
@@ -72,10 +77,9 @@ export default function App() {
 
       setMessages(prev => [...prev, aiMessage]);
 
-      // 5. If a tool was created, save to Drawer
       if (responseContent.tool) {
         setTools(prev => [...prev, responseContent.tool]);
-        setDrawerOpen(true); // Open drawer to show the new tool
+        setDrawerOpen(true); 
       }
 
     } catch (error) {
@@ -101,6 +105,7 @@ export default function App() {
         <div className="p-4 border-b flex justify-between items-center bg-white z-10">
           <span className="font-bold text-lg text-slate-800 flex items-center gap-2">
             <Activity size={20} className="text-blue-600"/> Neural OS
+            <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-1 rounded">v{GEMINI_MODEL_VERSION}</span>
           </span>
           <div className="flex gap-2">
             <button onClick={() => setSettingsOpen(true)} className="p-2 hover:bg-slate-100 rounded-full transition"><Settings size={20} className="text-slate-600"/></button>
@@ -117,7 +122,6 @@ export default function App() {
               }`}>
                 {m.text}
               </div>
-              {/* RENDER THE TOOL IF PRESENT */}
               {m.tool && (
                 <div className="mt-3 w-full max-w-[85%] animate-in fade-in slide-in-from-bottom-2">
                   <A2UIRenderer blueprint={m.tool} onAction={(action, pl) => alert(`Action: ${action} Payload: ${pl}`)} />
