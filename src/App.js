@@ -5,9 +5,21 @@ import A2UIRenderer from './A2UIRenderer';
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- THE SMART SCHEMA ---
-// We removed "style" and "className". 
-// The AI only focuses on DATA (Value, Label, Variant).
+// --- SHARED PROPS DEFINITION ---
+// We define this once and use it at every level to prevent "Empty Object" errors.
+const PROPS_DEFINITION = {
+  label: { type: SchemaType.STRING, nullable: true },
+  value: { type: SchemaType.STRING, nullable: true },
+  sub: { type: SchemaType.STRING, nullable: true },
+  max: { type: SchemaType.NUMBER, nullable: true },
+  icon: { type: SchemaType.STRING, nullable: true },
+  variant: { type: SchemaType.STRING, enum: ["primary", "secondary", "danger", "ghost", "title", "sub"], nullable: true },
+  onClick: { type: SchemaType.STRING, nullable: true },
+  content: { type: SchemaType.STRING, nullable: true }
+};
+
+// --- THE FIXED SCHEMA ---
+// We explicitly define 3 levels of nesting. This covers 99% of UIs (Container -> Card -> Stat).
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -21,48 +33,27 @@ const RESPONSE_SCHEMA = {
         root: {
           type: SchemaType.OBJECT,
           properties: {
-            t: { type: SchemaType.STRING, enum: ["Container", "Card", "Stat", "Progress", "Btn", "Grid", "Text"] }, 
-            p: {
-              type: SchemaType.OBJECT,
-              properties: {
-                label: { type: SchemaType.STRING, nullable: true },
-                value: { type: SchemaType.STRING, nullable: true },
-                sub: { type: SchemaType.STRING, nullable: true }, // Subtitle/Trend
-                max: { type: SchemaType.NUMBER, nullable: true },
-                icon: { type: SchemaType.STRING, nullable: true }, // Lucide Icon Name
-                variant: { type: SchemaType.STRING, enum: ["primary", "secondary", "danger", "ghost", "title", "sub"], nullable: true },
-                onClick: { type: SchemaType.STRING, nullable: true }, // Action ID
-                content: { type: SchemaType.STRING, nullable: true } // For Text
-              },
-              nullable: true
-            },
+            t: { type: SchemaType.STRING }, // Root Tag
+            p: { type: SchemaType.OBJECT, nullable: true, properties: PROPS_DEFINITION }, // Root Props
             c: {
               type: SchemaType.ARRAY,
               nullable: true,
               items: {
-                type: SchemaType.OBJECT,
+                type: SchemaType.OBJECT, // Level 1 Child
                 properties: {
                   t: { type: SchemaType.STRING },
-                  p: {
-                    type: SchemaType.OBJECT,
-                    properties: {
-                      label: { type: SchemaType.STRING, nullable: true },
-                      value: { type: SchemaType.STRING, nullable: true },
-                      sub: { type: SchemaType.STRING, nullable: true },
-                      max: { type: SchemaType.NUMBER, nullable: true },
-                      icon: { type: SchemaType.STRING, nullable: true },
-                      variant: { type: SchemaType.STRING, nullable: true },
-                      onClick: { type: SchemaType.STRING, nullable: true },
-                      content: { type: SchemaType.STRING, nullable: true }
-                    },
-                    nullable: true
-                  },
+                  p: { type: SchemaType.OBJECT, nullable: true, properties: PROPS_DEFINITION },
                   c: {
                     type: SchemaType.ARRAY,
                     nullable: true,
                     items: {
-                      type: SchemaType.OBJECT,
-                      properties: { t: { type: SchemaType.STRING }, p: { type: SchemaType.OBJECT, nullable: true } }
+                      type: SchemaType.OBJECT, // Level 2 Grandchild
+                      properties: {
+                         t: { type: SchemaType.STRING },
+                         p: { type: SchemaType.OBJECT, nullable: true, properties: PROPS_DEFINITION }
+                         // We stop recursion here to prevent "Infinite Loop" errors.
+                         // 3 Levels is enough for "Card > Grid > Stat".
+                      }
                     }
                   }
                 }
@@ -122,7 +113,7 @@ export default function App() {
         generationConfig: { 
           responseMimeType: "application/json", 
           responseSchema: RESPONSE_SCHEMA,
-          maxOutputTokens: 2000 // We don't need 8000 anymore because our JSON is tiny!
+          maxOutputTokens: 2000
         } 
       });
 
