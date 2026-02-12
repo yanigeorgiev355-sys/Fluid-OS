@@ -5,7 +5,9 @@ import A2UIRenderer from './A2UIRenderer';
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- MINIFIED SCHEMA ---
+// --- THE SMART SCHEMA ---
+// We removed "style" and "className". 
+// The AI only focuses on DATA (Value, Label, Variant).
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -19,16 +21,18 @@ const RESPONSE_SCHEMA = {
         root: {
           type: SchemaType.OBJECT,
           properties: {
-            t: { type: SchemaType.STRING }, // tag or stamp name
+            t: { type: SchemaType.STRING, enum: ["Container", "Card", "Stat", "Progress", "Btn", "Grid", "Text"] }, 
             p: {
               type: SchemaType.OBJECT,
               properties: {
-                s: { type: SchemaType.STRING }, // style/className
-                x: { type: SchemaType.STRING, nullable: true }, // text
-                n: { type: SchemaType.STRING, nullable: true }, // icon name
-                k: { type: SchemaType.STRING, nullable: true }, // action key
-                h: { type: SchemaType.STRING, nullable: true }, // placeholder
-                v: { type: SchemaType.STRING, nullable: true }  // value
+                label: { type: SchemaType.STRING, nullable: true },
+                value: { type: SchemaType.STRING, nullable: true },
+                sub: { type: SchemaType.STRING, nullable: true }, // Subtitle/Trend
+                max: { type: SchemaType.NUMBER, nullable: true },
+                icon: { type: SchemaType.STRING, nullable: true }, // Lucide Icon Name
+                variant: { type: SchemaType.STRING, enum: ["primary", "secondary", "danger", "ghost", "title", "sub"], nullable: true },
+                onClick: { type: SchemaType.STRING, nullable: true }, // Action ID
+                content: { type: SchemaType.STRING, nullable: true } // For Text
               },
               nullable: true
             },
@@ -42,12 +46,14 @@ const RESPONSE_SCHEMA = {
                   p: {
                     type: SchemaType.OBJECT,
                     properties: {
-                      s: { type: SchemaType.STRING },
-                      x: { type: SchemaType.STRING, nullable: true },
-                      n: { type: SchemaType.STRING, nullable: true }, // icon name
-                      k: { type: SchemaType.STRING, nullable: true },
-                      h: { type: SchemaType.STRING, nullable: true },
-                      v: { type: SchemaType.STRING, nullable: true }
+                      label: { type: SchemaType.STRING, nullable: true },
+                      value: { type: SchemaType.STRING, nullable: true },
+                      sub: { type: SchemaType.STRING, nullable: true },
+                      max: { type: SchemaType.NUMBER, nullable: true },
+                      icon: { type: SchemaType.STRING, nullable: true },
+                      variant: { type: SchemaType.STRING, nullable: true },
+                      onClick: { type: SchemaType.STRING, nullable: true },
+                      content: { type: SchemaType.STRING, nullable: true }
                     },
                     nullable: true
                   },
@@ -56,10 +62,7 @@ const RESPONSE_SCHEMA = {
                     nullable: true,
                     items: {
                       type: SchemaType.OBJECT,
-                      properties: {
-                         t: { type: SchemaType.STRING },
-                         p: { type: SchemaType.OBJECT, nullable: true, properties: { s: {type: SchemaType.STRING}, x: {type: SchemaType.STRING} } }
-                      }
+                      properties: { t: { type: SchemaType.STRING }, p: { type: SchemaType.OBJECT, nullable: true } }
                     }
                   }
                 }
@@ -75,20 +78,16 @@ const RESPONSE_SCHEMA = {
 
 const SYSTEM_PROMPT = `
 You are Neural OS.
-- Be conversational and concise.
-- Return a "tool" object (Virtual DOM).
-
-*** EFFICIENCY RULES (HYBRID MODE) ***
-Use these PRE-MADE COMPONENTS to save space and look professional:
-- "Card": A white content container (replaces div class="bg-white shadow...").
-- "Btn": A primary blue button.
-- "BtnSec": A secondary gray button.
-- "H1": A large bold header.
-- "Lbl": A small uppercase label.
-- "Icon": Renders an icon. Use "n" prop for name (e.g. { "t": "Icon", "p": { "n": "Droplets" } }).
-
-Use raw HTML ("div", "img", "input", "flex") for layout INSIDE cards.
-Use Tailwind CSS ("s" prop) for raw HTML.
+- Be conversational.
+- To build a tool, return a "tool" object using these SMART COMPONENTS:
+  1. "Stat": { label: "Water", value: "500ml", icon: "Droplets" }
+  2. "Progress": { label: "Goal", value: 50, max: 100 }
+  3. "Btn": { label: "Add Water", variant: "primary", onClick: "add_250" }
+  4. "Grid": Container for side-by-side stats/buttons.
+  5. "Card": White box to group items.
+  
+- DO NOT write CSS. The system handles design.
+- If the user adds data, CALCULATE the new state and return the updated tool.
 `;
 
 export default function App() {
@@ -123,7 +122,7 @@ export default function App() {
         generationConfig: { 
           responseMimeType: "application/json", 
           responseSchema: RESPONSE_SCHEMA,
-          maxOutputTokens: 8000
+          maxOutputTokens: 2000 // We don't need 8000 anymore because our JSON is tiny!
         } 
       });
 
@@ -132,7 +131,7 @@ export default function App() {
         dynamicPrompt += `\n[CURRENT APP STATE]:
         Title: "${activeApp.title}"
         Data: ${JSON.stringify(activeApp.blueprint)}
-        INSTRUCTION: Return the FULL updated Virtual DOM tree.`;
+        INSTRUCTION: Return the FULL updated component tree with new values.`;
       }
 
       const chat = model.startChat({ history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] });
@@ -140,11 +139,10 @@ export default function App() {
       
       let data;
       try {
-        const text = result.response.text();
-        data = JSON.parse(text);
+        data = JSON.parse(result.response.text());
       } catch (jsonError) {
         console.error("JSON Crash:", jsonError);
-        data = { response: "I ran out of memory. Try asking for something simpler.", tool: null };
+        data = { response: "I had trouble building that. Please try again.", tool: null };
       }
       
       setMessages(prev => [...prev, { role: 'model', text: data.response }]);
