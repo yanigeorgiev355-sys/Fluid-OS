@@ -3,9 +3,9 @@ import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, S
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
+// Using Flash for speed.
 const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
 
-// 1. STRICT SCHEMA to force valid JSON
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -85,19 +85,19 @@ export default function App() {
   };
 
   // --- THE NUCLEAR PARSER ---
+  // This extracts the JSON object directly using Regex, ignoring all other text.
   const robustJSONParse = (text) => {
     try {
-      // 1. Try standard parse
+      // 1. Try standard parse first
       return JSON.parse(text);
     } catch (e) {
-      // 2. If that fails, extract the JSON object using Regex
-      // This looks for the first '{' and the last '}'
+      // 2. If that fails, hunt for the first '{' and the last '}'
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
           return JSON.parse(jsonMatch[0]);
         } catch (e2) {
-          console.error("Regex Parse Failed");
+          console.error("Regex Parse Failed", e2);
           return null;
         }
       }
@@ -146,7 +146,7 @@ export default function App() {
       const result = await chat.sendMessage(textToSend);
       const responseText = result.response.text();
       
-      console.log("Raw AI Response:", responseText); // Debugging
+      console.log("Raw AI Response:", responseText); // Check console if it fails
 
       const data = robustJSONParse(responseText);
 
