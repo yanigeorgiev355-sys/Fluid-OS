@@ -3,6 +3,7 @@ import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, S
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
+// Using Flash for speed. If it hallucinates too much, we can switch to "gemini-2.0-pro"
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
 const RESPONSE_SCHEMA = {
@@ -50,6 +51,7 @@ Do not write HTML. Write JSON that represents these blocks:
 5. "Divider": {} 
 
 LOGIC RULES:
+- If the user is just chatting (e.g., "Hi", "Explain this"), set "tool" to null.
 - When a user clicks a button, calculate the new state and return the COMPLETE updated block list.
 - Keep apps focused. One screen, one specific job.
 `;
@@ -129,14 +131,22 @@ export default function App() {
       
       let data;
       try {
-        // --- CRITICAL FIX: CLEAN JSON ---
-        // Removes markdown code blocks and whitespace before parsing
-        const cleanText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        data = JSON.parse(cleanText);
+        // --- BULLETPROOF PARSER V2 ---
+        // 1. Remove markdown code blocks
+        let cleanText = responseText.replace(/```json/g, '').replace(/```/g, '');
+        // 2. Find the first '{' and the last '}' to ignore conversational intro/outro
+        const firstBrace = cleanText.indexOf('{');
+        const lastBrace = cleanText.lastIndexOf('}');
+        
+        if (firstBrace !== -1 && lastBrace !== -1) {
+            cleanText = cleanText.substring(firstBrace, lastBrace + 1);
+            data = JSON.parse(cleanText);
+        } else {
+            throw new Error("No JSON object found in response");
+        }
       } catch (jsonError) {
-        console.error("JSON Parse Error:", jsonError);
-        // Fallback allows the user to see what went wrong without crashing
-        data = { response: "I had trouble updating the app. Please try again.", tool: null };
+        console.error("JSON Parse Error:", jsonError, "Raw Text:", responseText);
+        data = { response: "I understood, but I had trouble drawing the interface. Please try again.", tool: null };
       }
 
       if (data.response && !isSystemAction) {
@@ -216,7 +226,7 @@ export default function App() {
             </div>
         )}
 
-        {/* UPDATED INPUT AREA: 3 Rows, No Enter-to-Send */}
+        {/* INPUT AREA: 3 Rows, No auto-send on Enter */}
         <div className="p-3 border-t bg-white flex gap-2 items-end">
           <textarea 
             className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50 resize-none font-sans text-sm" 
@@ -292,7 +302,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* FIXED TOGGLE BUTTON: Moved to bottom-48 (Higher up) */}
+      {/* TOGGLE BUTTON: Fixed to be higher up */}
       {view !== 'dock' && (
         <button 
             onClick={() => setView(view === 'chat' ? 'app' : 'chat')} 
