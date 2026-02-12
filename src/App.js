@@ -1,40 +1,78 @@
 import React, { useState, useEffect } from 'react';
 import { Send, Menu, Settings, X, Activity, Sparkles } from 'lucide-react';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai'; // Import SchemaType
 import A2UIRenderer from './A2UIRenderer';
 
-// --- CONFIGURATION (Change Version Here) ---
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- SYSTEM PROMPT ---
+// --- THE HYBRID SCHEMA (The "Container" for Freedom) ---
+// We don't scream at the AI in text. We simply hand it this form to fill out.
+const RESPONSE_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    // Slot 1: The AI's internal reasoning (Hidden from user)
+    thought: { type: SchemaType.STRING, description: "Your internal reasoning about what the user needs." },
+    
+    // Slot 2: The conversational response (The "Human" part)
+    response: { type: SchemaType.STRING, description: "The natural language response to the user." },
+    
+    // Slot 3: The Tool (The "Strict" part - Optional)
+    tool: {
+      type: SchemaType.OBJECT,
+      nullable: true,
+      description: "Return a tool ONLY if needed. Otherwise null.",
+      properties: {
+        type: { type: SchemaType.STRING, enum: ["Card", "Text", "Gauge", "ButtonRow", "Chart"] },
+        props: {
+          type: SchemaType.OBJECT,
+          properties: {
+            title: { type: SchemaType.STRING },
+            content: { type: SchemaType.STRING },
+            value: { type: SchemaType.NUMBER },
+            max: { type: SchemaType.NUMBER },
+            unit: { type: SchemaType.STRING },
+            // We force "actions" here structurally
+            actions: {
+              type: SchemaType.ARRAY,
+              items: {
+                type: SchemaType.OBJECT,
+                properties: {
+                  label: { type: SchemaType.STRING },
+                  action: { type: SchemaType.STRING },
+                  payload: { type: SchemaType.STRING } // Simplified to string for stability
+                }
+              }
+            }
+          }
+        },
+        children: { type: SchemaType.ARRAY, items: { type: SchemaType.OBJECT, properties: {} } } // Recursive simplified
+      }
+    }
+  },
+  required: ["thought", "response"]
+};
+
+// --- THE NEW "FREEDOM" PROMPT ---
+// Notice how much friendlier this is!
 const SYSTEM_PROMPT = `
-You are an Agentic OS. You DO NOT write React code. You respond in JSON format ONLY.
-If the user needs a tool (tracker, chart, list), output a JSON object with this structure:
-{
-  "text": "Your helpful text response here...",
-  "tool": {
-    "type": "Card",
-    "props": { "title": "Tool Title" },
-    "children": [
-       // Use only these types: 'Text', 'Gauge', 'ButtonRow', 'Chart'
-       { "type": "Text", "props": { "content": "Sample text", "style": "highlight" } }
-    ]
-  }
-}
-If no tool is needed, return: { "text": "Your response...", "tool": null }
-Do not use markdown formatting like \`\`\`json. Return raw JSON.
+You are Neural OS, a proactive and empathetic AI assistant.
+Your goal is to help the user manage their life (health, work, habits).
+
+- Be conversational and natural.
+- You have a "Tool Drawer" capabilities (Water Trackers, Sleep Logs, Charts).
+- USE YOUR JUDGMENT: If a tool helps, create it. If not, just chat.
+- If the user is stressed, be kind. If they are efficient, be quick.
 `;
 
 export default function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
-  const [messages, setMessages] = useState([{ role: 'model', text: "Hello! I am your Neural OS. Add your Gemini API Key to start." }]);
+  const [messages, setMessages] = useState([{ role: 'model', text: "Hello! I am your Neural OS. I'm ready to help." }]);
   const [input, setInput] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(!apiKey);
   const [tools, setTools] = useState([]); 
   const [loading, setLoading] = useState(false);
 
-  // --- HANDLE SENDING MESSAGE ---
   const handleSend = async () => {
     if (!input.trim() || !apiKey) return;
     
@@ -44,41 +82,38 @@ export default function App() {
     setLoading(true);
 
     try {
-      // 1. Initialize Gemini
       const genAI = new GoogleGenerativeAI(apiKey);
-      
-      // USE THE VERSION DEFINED AT THE TOP
       const model = genAI.getGenerativeModel({ 
         model: GEMINI_MODEL_VERSION,
-        generationConfig: { responseMimeType: "application/json" } 
+        generationConfig: { 
+          responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA // <--- THIS IS THE MAGIC
+        } 
       });
 
-      // 2. Build the Chat History
       const chat = model.startChat({
         history: [
-          { role: "user", parts: [{ text: SYSTEM_PROMPT }] },
-          { role: "model", parts: [{ text: "{ \"text\": \"Understood. I will output JSON only.\" }" }] }
+          { role: "user", parts: [{ text: SYSTEM_PROMPT }] }
         ],
       });
 
-      // 3. Send User Message
       const result = await chat.sendMessage(input);
       const responseText = result.response.text();
+      console.log("Raw:", responseText);
+
+      const data = JSON.parse(responseText);
       
-      console.log("Gemini Raw Response:", responseText); 
-      const responseContent = JSON.parse(responseText);
-      
-      // 4. Handle the AI response
+      // We use data.response (The Chat) AND data.tool (The Widget)
       const aiMessage = { 
         role: 'model', 
-        text: responseContent.text || "Here is your tool.",
-        tool: responseContent.tool 
+        text: data.response, 
+        tool: data.tool 
       };
 
       setMessages(prev => [...prev, aiMessage]);
 
-      if (responseContent.tool) {
-        setTools(prev => [...prev, responseContent.tool]);
+      if (data.tool) {
+        setTools(prev => [...prev, data.tool]);
         setDrawerOpen(true); 
       }
 
@@ -89,6 +124,9 @@ export default function App() {
     setLoading(false);
   };
 
+  // ... (Keep the rest of your UI code: return statement, saveKey, etc. exactly as before) ...
+  // [Copy the return (...) block from the previous App.js here]
+  
   const saveKey = (e) => {
     e.preventDefault();
     const key = e.target.elements.key.value;
@@ -99,7 +137,6 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
-      
       {/* LEFT: CHAT AREA */}
       <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full bg-white shadow-xl border-x border-slate-200">
         <div className="p-4 border-b flex justify-between items-center bg-white z-10">
@@ -122,6 +159,7 @@ export default function App() {
               }`}>
                 {m.text}
               </div>
+              {/* RENDER THE TOOL IF PRESENT */}
               {m.tool && (
                 <div className="mt-3 w-full max-w-[85%] animate-in fade-in slide-in-from-bottom-2">
                   <A2UIRenderer blueprint={m.tool} onAction={(action, pl) => alert(`Action: ${action} Payload: ${pl}`)} />
