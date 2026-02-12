@@ -4,8 +4,8 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
 // CONFIGURATION
-// Use 2.0-flash as the stable standard. If you have a working 2.5 key, you can swap this back.
-const GEMINI_MODEL_VERSION = "gemini-2.0-flash"; 
+// Use 2.5-flash as the stable standard. If you have a working 2.5 key, you can swap this back.
+const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
 // --- SAFETY LAYER 1: ROBUST PARSING ---
 const robustJSONParse = (text) => {
