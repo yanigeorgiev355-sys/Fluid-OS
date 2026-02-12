@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, Send, AlertTriangle } from 'lucide-react';
+import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, Send, AlertTriangle, Loader2 } from 'lucide-react';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
@@ -46,14 +46,6 @@ AVAILABLE BLOCKS:
 2. "Stat": { label: "Today", value: "800ml" }
 3. "Btn": { label: "+250ml", variant: "primary", onClick: "add_250" }
 4. "Text": { label: "Keep going!" }
-
-Example Water Tracker:
-blocks: [
-  { t: "Header", label: "Water Log", icon: "Droplets" },
-  { t: "Stat", label: "Intake", value: "0ml" },
-  { t: "Btn", label: "+250ml", variant: "primary", onClick: "add_250" },
-  { t: "Btn", label: "Reset", variant: "secondary", onClick: "reset" }
-]
 `;
 
 export default function App() {
@@ -65,34 +57,42 @@ export default function App() {
   const [activeAppId, setActiveAppId] = useState(null); 
   const [view, setView] = useState('chat'); 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null); // New Error State for Quota
+  const [rateLimitTimer, setRateLimitTimer] = useState(0); // 0 = Okay, >0 = Penalty Box
   const [settingsOpen, setSettingsOpen] = useState(!apiKey);
   const messagesEndRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('neural_apps', JSON.stringify(apps)); }, [apps]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
+  // COUNTDOWN TIMER FOR RATE LIMIT
+  useEffect(() => {
+    if (rateLimitTimer > 0) {
+      const timer = setInterval(() => setRateLimitTimer(t => t - 1), 1000);
+      return () => clearInterval(timer);
+    }
+  }, [rateLimitTimer]);
+
   const activeApp = apps.find(a => a.id === activeAppId);
 
-  // --- THE SILENT ACTION HANDLER ---
   const handleAppAction = async (actionId, payload) => {
-    // 1. Don't add to message list. Just trigger the API.
+    if (rateLimitTimer > 0) return; // Block clicks if penalized
     const actionPrompt = `[SYSTEM EVENT]: User clicked button "${actionId}". Value: "${payload}". Update the app state based on this logic.`;
     handleSend(actionPrompt, true); 
   };
 
   const handleSend = async (manualInput = null, isSystemAction = false) => {
+    if (rateLimitTimer > 0) return; // STOP if penalized
+    
     const textToSend = manualInput || input;
     if (!textToSend.trim() || !apiKey) return;
     
-    // Only show USER messages in chat. Hide system messages.
+    // Only show user text, NEVER show system prompts
     if (!isSystemAction) {
         setMessages(prev => [...prev, { role: 'user', text: textToSend }]);
         setInput('');
     }
     
     setLoading(true);
-    setError(null);
 
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
@@ -110,23 +110,16 @@ export default function App() {
         dynamicPrompt += `\n[CURRENT APP STATE]:
         Title: "${activeApp.title}"
         Current Blocks JSON: ${JSON.stringify(activeApp.blueprint.blocks)}
-        
-        INSTRUCTION: Read the 'Current Blocks' above. Apply the action "${textToSend}". Return the NEW updated blocks.`;
+        INSTRUCTION: Apply action "${textToSend}". Return NEW blocks.`;
       }
 
       const chat = model.startChat({ history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] });
       const result = await chat.sendMessage(textToSend);
       
-      let data;
-      try {
-        data = JSON.parse(result.response.text());
-      } catch (jsonError) {
-        console.error("JSON Crash:", jsonError);
-        data = { response: "Calculation error. Try again.", tool: null };
-      }
-      
-      // Only show model text response if it's NOT a system update (optional, keeps chat cleaner)
-      if (!isSystemAction || !data.tool) {
+      let data = JSON.parse(result.response.text());
+
+      // Only show model response if it's NOT a tool update (keeps chat clean)
+      if (!data.tool && !isSystemAction) {
           setMessages(prev => [...prev, { role: 'model', text: data.response }]);
       }
       
@@ -145,7 +138,8 @@ export default function App() {
       }
     } catch (e) {
       if (e.message.includes('429')) {
-        setError("You are clicking too fast! Google's Free Tier is taking a break. Wait 30s.");
+        // ACTIVATE PENALTY BOX
+        setRateLimitTimer(30); 
       } else {
         setMessages(prev => [...prev, { role: 'system', text: "Error: " + e.message }]);
       }
@@ -166,19 +160,21 @@ export default function App() {
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.map((m, i) => (
-            <div key={i} className={`p-3 rounded-xl max-w-[85%] ${m.role === 'user' ? 'bg-blue-600 text-white self-end ml-auto' : m.role === 'system' ? 'text-xs text-slate-400 text-center italic' : 'bg-slate-100 text-slate-800'}`}>{m.text}</div>
+            <div key={i} className={`p-3 rounded-xl max-w-[85%] ${m.role === 'user' ? 'bg-blue-600 text-white self-end ml-auto' : m.role === 'system' ? 'text-xs text-red-400 text-center' : 'bg-slate-100 text-slate-800'}`}>{m.text}</div>
           ))}
           <div ref={messagesEndRef} />
         </div>
-        {/* QUOTA ERROR MESSAGE */}
-        {error && (
-            <div className="bg-red-50 text-red-600 text-xs p-2 text-center flex items-center justify-center gap-2">
-                <AlertTriangle size={14}/> {error}
+        
+        {/* PENALTY BOX MESSAGE */}
+        {rateLimitTimer > 0 && (
+            <div className="bg-orange-50 text-orange-600 text-xs p-2 text-center flex items-center justify-center gap-2 animate-pulse">
+                <AlertTriangle size={14}/> API Cooldown: Wait {rateLimitTimer}s
             </div>
         )}
+
         <div className="p-3 border-t bg-white flex gap-2">
-          <input className="flex-1 bg-slate-100 rounded-full px-4 py-3 focus:outline-none" placeholder="Type a message..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} />
-          <button onClick={() => handleSend()} className="bg-blue-600 text-white p-3 rounded-full shadow-lg"><Send size={20}/></button>
+          <input className="flex-1 bg-slate-100 rounded-full px-4 py-3 focus:outline-none disabled:opacity-50" placeholder={rateLimitTimer > 0 ? "Cooling down..." : "Type a message..."} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} disabled={rateLimitTimer > 0} />
+          <button onClick={() => handleSend()} disabled={rateLimitTimer > 0} className="bg-blue-600 text-white p-3 rounded-full shadow-lg disabled:bg-slate-400"><Send size={20}/></button>
         </div>
       </div>
 
@@ -190,14 +186,14 @@ export default function App() {
         </div>
         <div className="flex-1 p-6 overflow-y-auto flex items-center justify-center relative">
           
-          {/* LOADING INDICATOR ON TOP OF APP */}
+          {/* UPDATE SPINNER */}
           {loading && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-4 py-1 rounded-full text-xs font-medium z-50 animate-pulse">
-                Updating AI...
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-medium z-50 flex items-center gap-2 shadow-xl">
+                <Loader2 size={14} className="animate-spin"/> Updating...
             </div>
           )}
 
-          {activeApp && <div className="w-full max-w-md"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} /></div>}
+          {activeApp && <div className="w-full max-w-md"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} disabled={rateLimitTimer > 0} /></div>}
         </div>
       </div>
 
