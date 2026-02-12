@@ -4,7 +4,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
 
 // --- CONFIGURATION (Change Version Here) ---
-const GEMINI_MODEL_VERSION = "gemini-2.5-flash-latest"; 
+const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
 // --- SYSTEM PROMPT ---
 const SYSTEM_PROMPT = `
