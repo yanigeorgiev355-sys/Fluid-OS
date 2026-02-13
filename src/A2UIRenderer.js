@@ -31,11 +31,8 @@ const COMPONENTS = {
     );
   },
 
-  // THE NEW PRO CHART COMPONENT
   Chart: ({ data }) => {
-    if (!data || !Array.isArray(data) || data.length < 2) return null; // Need 2 points to draw a line
-    
-    // Auto-detect which key is the number we want to plot
+    if (!data || !Array.isArray(data) || data.length < 2) return null; 
     const plotKey = Object.keys(data[0]).find(k => typeof data[0][k] === 'number');
     if (!plotKey) return null;
 
@@ -51,10 +48,7 @@ const COMPONENTS = {
               </linearGradient>
             </defs>
             <XAxis dataKey="timestamp" hide />
-            <Tooltip 
-              contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }} 
-              itemStyle={{ color: '#3b82f6' }}
-            />
+            <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }} itemStyle={{ color: '#3b82f6' }} />
             <Area type="monotone" dataKey={plotKey} stroke="#3b82f6" strokeWidth={4} fillOpacity={1} fill="url(#colorGradient)" />
           </AreaChart>
         </ResponsiveContainer>
@@ -62,25 +56,47 @@ const COMPONENTS = {
     );
   },
 
-  // THE NEW PRO HISTORY LIST COMPONENT
-  DataList: ({ data }) => {
+  // --- UPGRADED CRUD DATALIST ---
+  DataList: ({ data, dataKey, onAction }) => {
     if (!data || !Array.isArray(data) || data.length === 0) {
       return <div className="p-6 bg-white rounded-3xl border border-slate-100 mb-4 text-center text-slate-400 text-sm">No history yet. Start tracking!</div>;
     }
     return (
       <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden mb-4 animate-in slide-in-from-bottom-3">
-        {/* We slice and reverse so the newest entry is always at the top */}
         {data.slice().reverse().map((item, i) => {
+           // Calculate original index to ensure we delete the correct item
+           const originalIndex = data.length - 1 - i; 
            const numKey = Object.keys(item).find(k => typeof item[k] === 'number');
            const strKey = Object.keys(item).find(k => typeof item[k] === 'string' && k !== 'timestamp');
            
            return (
-             <div key={i} className="p-4 border-b border-slate-50 last:border-0 flex justify-between items-center hover:bg-slate-50 transition-colors">
+             <div key={originalIndex} className="p-4 border-b border-slate-50 last:border-0 flex justify-between items-center hover:bg-slate-50 transition-colors group">
                 <div className="flex flex-col">
                   <span className="font-bold text-slate-700 capitalize">{item[strKey] || 'Entry'}</span>
                   <span className="text-xs text-slate-400 font-medium">{item.timestamp}</span>
                 </div>
-                <span className="font-extrabold text-blue-600">{item[numKey] !== undefined ? item[numKey] : ''}</span>
+                
+                <div className="flex items-center gap-4">
+                  <span className="font-extrabold text-blue-600">{item[numKey] !== undefined ? item[numKey] : ''}</span>
+                  
+                  {/* CRUD ACTION BUTTONS (Hidden until hover) */}
+                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={() => onAction(JSON.stringify({ tool: 'edit_in_list', payload: { key: dataKey, index: originalIndex, field: numKey || strKey } }))} 
+                      className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-all"
+                      title="Edit"
+                    >
+                      <Icons.Edit2 size={16}/>
+                    </button>
+                    <button 
+                      onClick={() => onAction(JSON.stringify({ tool: 'delete_from_list', payload: { key: dataKey, index: originalIndex } }))} 
+                      className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
+                      title="Delete"
+                    >
+                      <Icons.Trash2 size={16}/>
+                    </button>
+                  </div>
+                </div>
              </div>
            );
         })}
@@ -139,6 +155,7 @@ const A2UIRenderer = ({ blueprint, onAction, onInputChange, formState }) => {
             {...block} 
             value={block.t === 'Input' ? formState[block.id] : block.value} 
             onInputChange={onInputChange}
+            onAction={onAction} // Passed down for the DataList to use!
             onClick={block.onClick ? () => onAction(block.onClick) : undefined} 
           />
         );
