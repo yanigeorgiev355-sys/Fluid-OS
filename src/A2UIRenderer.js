@@ -15,7 +15,6 @@ const COMPONENTS = {
     );
   },
 
-  // NEW: The Card Container
   Card: ({ title, children, renderBlocks }) => (
     <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] mb-4 flex flex-col h-full animate-in zoom-in-95">
       {title && <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-6 border-b border-slate-50 pb-3">{title}</h3>}
@@ -25,7 +24,6 @@ const COMPONENTS = {
     </div>
   ),
 
-  // NEW: The Grid Container
   Grid: ({ columns, children, renderBlocks }) => (
     <div className={`grid grid-cols-1 md:grid-cols-${columns || 2} gap-4 mb-4 items-start animate-in slide-in-from-bottom-4`}>
       {renderBlocks(children)}
@@ -146,7 +144,6 @@ const COMPONENTS = {
 const A2UIRenderer = ({ blueprint, onAction, onInputChange, formState }) => {
   if (!blueprint || !blueprint.blocks) return <div className="text-center p-8 text-slate-400">Dreaming up UI...</div>;
 
-  // RECURSIVE RENDERER: This allows Blocks to live inside of Grids and Cards!
   const renderBlocks = (blocksToRender) => {
     if (!blocksToRender) return null;
     return blocksToRender.map((block, index) => {
@@ -159,14 +156,13 @@ const A2UIRenderer = ({ blueprint, onAction, onInputChange, formState }) => {
           onInputChange={onInputChange}
           onAction={onAction} 
           onClick={block.onClick ? () => onAction(block.onClick) : undefined}
-          renderBlocks={renderBlocks} // Pass the recursive function down
+          renderBlocks={renderBlocks} 
         />
       );
     });
   };
 
   return (
-    // Widened from max-w-md to max-w-3xl to allow side-by-side grids
     <div className="w-full max-w-3xl mx-auto pb-32 px-4">
       {renderBlocks(blueprint.blocks)}
     </div>
