@@ -6,7 +6,7 @@ const COMPONENTS = {
   Header: ({ label, icon }) => {
     const Icon = icon && Icons[icon] ? Icons[icon] : Icons.Sparkles;
     return (
-      <div className="text-center py-6 animate-in fade-in zoom-in duration-500">
+      <div className="col-span-full text-center py-6 animate-in fade-in zoom-in duration-500">
         <div className="inline-flex p-4 bg-gradient-to-tr from-blue-600 to-purple-600 text-white rounded-3xl shadow-lg mb-4">
           <Icon size={32} />
         </div>
@@ -15,15 +15,32 @@ const COMPONENTS = {
     );
   },
 
+  // NEW: The Card Container
+  Card: ({ title, children, renderBlocks }) => (
+    <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] mb-4 flex flex-col h-full animate-in zoom-in-95">
+      {title && <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-6 border-b border-slate-50 pb-3">{title}</h3>}
+      <div className="flex-1">
+        {renderBlocks(children)}
+      </div>
+    </div>
+  ),
+
+  // NEW: The Grid Container
+  Grid: ({ columns, children, renderBlocks }) => (
+    <div className={`grid grid-cols-1 md:grid-cols-${columns || 2} gap-4 mb-4 items-start animate-in slide-in-from-bottom-4`}>
+      {renderBlocks(children)}
+    </div>
+  ),
+
   Stat: ({ label, value, icon }) => {
     if (value === undefined) return null;
     const Icon = icon && Icons[icon] ? Icons[icon] : null;
     return (
-      <div className="group relative overflow-hidden bg-white p-6 rounded-3xl border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] mb-4 animate-in slide-in-from-bottom-2">
+      <div className="group relative overflow-hidden bg-slate-50 p-6 rounded-2xl mb-4">
         <div className="flex justify-between items-start">
           <div className="flex flex-col text-left">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{label}</span>
-            <span className="text-5xl font-extrabold text-slate-900 tracking-tighter">{value}</span>
+            <span className="text-5xl font-extrabold text-blue-600 tracking-tighter">{value}</span>
           </div>
           {Icon && <div className="text-slate-300"><Icon size={24} /></div>}
         </div>
@@ -32,13 +49,12 @@ const COMPONENTS = {
   },
 
   Chart: ({ data }) => {
-    if (!data || !Array.isArray(data) || data.length < 2) return null; 
+    if (!data || !Array.isArray(data) || data.length < 2) return <div className="text-slate-400 text-sm text-center py-10">Add more data to see the trend.</div>; 
     const plotKey = Object.keys(data[0]).find(k => typeof data[0][k] === 'number');
     if (!plotKey) return null;
 
     return (
-      <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] mb-4 h-56 animate-in fade-in zoom-in">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Activity Trend</h3>
+      <div className="h-56 w-full mt-4">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data}>
             <defs>
@@ -56,15 +72,13 @@ const COMPONENTS = {
     );
   },
 
-  // --- UPGRADED CRUD DATALIST ---
   DataList: ({ data, dataKey, onAction }) => {
     if (!data || !Array.isArray(data) || data.length === 0) {
-      return <div className="p-6 bg-white rounded-3xl border border-slate-100 mb-4 text-center text-slate-400 text-sm">No history yet. Start tracking!</div>;
+      return <div className="p-6 text-center text-slate-400 text-sm bg-slate-50 rounded-2xl">No history yet. Start tracking!</div>;
     }
     return (
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden mb-4 animate-in slide-in-from-bottom-3">
+      <div className="rounded-2xl border border-slate-100 overflow-hidden">
         {data.slice().reverse().map((item, i) => {
-           // Calculate original index to ensure we delete the correct item
            const originalIndex = data.length - 1 - i; 
            const numKey = Object.keys(item).find(k => typeof item[k] === 'number');
            const strKey = Object.keys(item).find(k => typeof item[k] === 'string' && k !== 'timestamp');
@@ -79,22 +93,9 @@ const COMPONENTS = {
                 <div className="flex items-center gap-4">
                   <span className="font-extrabold text-blue-600">{item[numKey] !== undefined ? item[numKey] : ''}</span>
                   
-                  {/* CRUD ACTION BUTTONS (Hidden until hover) */}
                   <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button 
-                      onClick={() => onAction(JSON.stringify({ tool: 'edit_in_list', payload: { key: dataKey, index: originalIndex, field: numKey || strKey } }))} 
-                      className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-all"
-                      title="Edit"
-                    >
-                      <Icons.Edit2 size={16}/>
-                    </button>
-                    <button 
-                      onClick={() => onAction(JSON.stringify({ tool: 'delete_from_list', payload: { key: dataKey, index: originalIndex } }))} 
-                      className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
-                      title="Delete"
-                    >
-                      <Icons.Trash2 size={16}/>
-                    </button>
+                    <button onClick={() => onAction(JSON.stringify({ tool: 'edit_in_list', payload: { key: dataKey, index: originalIndex, field: numKey || strKey } }))} className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-all"><Icons.Edit2 size={16}/></button>
+                    <button onClick={() => onAction(JSON.stringify({ tool: 'delete_from_list', payload: { key: dataKey, index: originalIndex } }))} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"><Icons.Trash2 size={16}/></button>
                   </div>
                 </div>
              </div>
@@ -105,14 +106,14 @@ const COMPONENTS = {
   },
 
   Input: ({ id, label, placeholder, value, onInputChange }) => (
-    <div className="mb-4 text-left animate-in slide-in-from-bottom-2">
+    <div className="mb-4 text-left">
       {label && <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1">{label}</label>}
       <input 
         type="text" 
         value={value || ''}
         onChange={(e) => onInputChange(id, e.target.value)}
         placeholder={placeholder || "Type here..."}
-        className="w-full p-4 bg-white rounded-2xl border-2 border-slate-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 focus:outline-none transition-all font-medium text-slate-700 shadow-sm"
+        className="w-full p-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-blue-500 focus:bg-white focus:outline-none transition-all font-medium text-slate-700"
       />
     </div>
   ),
@@ -139,27 +140,35 @@ const COMPONENTS = {
     return <p className={`text-center my-4 ${variant === 'caption' ? 'text-xs text-slate-400 uppercase tracking-widest' : 'text-slate-500 text-sm'}`}>{label}</p>;
   },
 
-  Divider: () => <div className="h-px bg-slate-200 my-6 mx-4" />
+  Divider: () => <div className="col-span-full h-px bg-slate-200 my-6 mx-4" />
 };
 
 const A2UIRenderer = ({ blueprint, onAction, onInputChange, formState }) => {
   if (!blueprint || !blueprint.blocks) return <div className="text-center p-8 text-slate-400">Dreaming up UI...</div>;
 
+  // RECURSIVE RENDERER: This allows Blocks to live inside of Grids and Cards!
+  const renderBlocks = (blocksToRender) => {
+    if (!blocksToRender) return null;
+    return blocksToRender.map((block, index) => {
+      const Component = COMPONENTS[block.t] || COMPONENTS.Text;
+      return (
+        <Component 
+          key={index} 
+          {...block} 
+          value={block.t === 'Input' ? formState[block.id] : block.value} 
+          onInputChange={onInputChange}
+          onAction={onAction} 
+          onClick={block.onClick ? () => onAction(block.onClick) : undefined}
+          renderBlocks={renderBlocks} // Pass the recursive function down
+        />
+      );
+    });
+  };
+
   return (
-    <div className="w-full max-w-md mx-auto pb-32 px-2">
-      {blueprint.blocks.map((block, index) => {
-        const Component = COMPONENTS[block.t] || COMPONENTS.Text;
-        return (
-          <Component 
-            key={index} 
-            {...block} 
-            value={block.t === 'Input' ? formState[block.id] : block.value} 
-            onInputChange={onInputChange}
-            onAction={onAction} // Passed down for the DataList to use!
-            onClick={block.onClick ? () => onAction(block.onClick) : undefined} 
-          />
-        );
-      })}
+    // Widened from max-w-md to max-w-3xl to allow side-by-side grids
+    <div className="w-full max-w-3xl mx-auto pb-32 px-4">
+      {renderBlocks(blueprint.blocks)}
     </div>
   );
 };
