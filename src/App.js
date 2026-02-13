@@ -69,8 +69,7 @@ AVAILABLE TOOLS (For the payload):
 
 PRO TIP FOR TRACKERS (FINANCE, DIET, HABITS):
 To build a useful tracker with charts and history, ALWAYS use the "append_to_list" tool to store an array of objects. 
-Example Payload: "{\\"key\\": \\"history\\", \\"item\\": {\\"amount\\": \\"$INPUT:amount\\", \\"name\\": \\"$INPUT:name\\"}}"
-Our system will AUTOMATICALLY render the Chart and History List for you if it detects an array in the data!
+Our system will automatically arrange your arrays into a beautiful Multi-Card Dashboard!
 `;
 
 const safeParse = (input) => {
@@ -80,48 +79,66 @@ const safeParse = (input) => {
   catch (e) { try { return JSON.parse(input.replace(/'/g, '"')); } catch (e2) { return {}; } }
 };
 
+// --- UPGRADED ADAPTER: NATIVE CONTAINERS ---
 const transformToBlocks = (appSchema) => {
   const { data = {}, view = {}, inputs = [], actions = [] } = appSchema;
   const blocks = [];
 
-  blocks.push({ t: "Header", label: appSchema.title || "App", icon: view.icon || "Sparkles", variant: "hero" });
+  // Top Level Header
+  blocks.push({ t: "Header", label: appSchema.title || "App", icon: view.icon || "Sparkles" });
 
   const listKey = Object.keys(data).find(k => Array.isArray(data[k]));
   
   if (listKey) {
       const arr = data[listKey];
       let total = 0;
-      
       if (arr.length > 0) {
           const numKey = Object.keys(arr[0]).find(k => typeof arr[0][k] === 'number');
           if (numKey) total = arr.reduce((sum, item) => sum + (item[numKey] || 0), 0);
           else total = arr.length; 
       }
       
-      blocks.push({ t: "Stat", label: `Total ${listKey}`, value: total });
-      if (arr.length > 1) blocks.push({ t: "Chart", data: arr });
+      // FORM BUILDING (Inputs & Actions)
+      const formChildren = [];
+      if (inputs) inputs.forEach(input => formChildren.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder }));
+      if (actions) actions.forEach(action => formChildren.push({ t: "Btn", label: action.label, variant: action.variant, icon: action.icon, onClick: JSON.stringify({ tool: action.tool, payload: action.payload }) }));
+
+      // THE MAGIC: We wrap the layout in a Grid and separate Cards!
+      blocks.push({
+        t: "Grid",
+        columns: 2,
+        children: [
+          // Left Column: The Form + The Total + The Chart
+          {
+            t: "Card",
+            title: "Overview & Entry",
+            children: [
+               { t: "Stat", label: `Total ${listKey}`, value: total },
+               ...formChildren,
+               { t: "Chart", data: arr } // Chart stays inside the left card
+            ]
+          },
+          // Right Column: The Transaction History
+          {
+            t: "Card",
+            title: "History Log",
+            children: [
+               { t: "DataList", data: arr, dataKey: listKey }
+            ]
+          }
+        ]
+      });
       
-      // We pass the listKey here so the CRUD actions know which array to target
-      blocks.push({ t: "DataList", data: arr, dataKey: listKey }); 
-      
-  } else if (view.layout === "hero_center") {
+  } else {
+      // Simple App Fallback (Not an array)
       const keys = Object.keys(data);
       let mainKey = keys.find(k => k !== 'unit') || "count";
       blocks.push({ t: "Stat", label: mainKey, value: `${data[mainKey] || 0} ${data.unit || ''}`.trim() });
+      if (inputs) inputs.forEach(input => blocks.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder }));
+      if (actions) actions.forEach(action => blocks.push({ t: "Btn", label: action.label, variant: action.variant, icon: action.icon, onClick: JSON.stringify({ tool: action.tool, payload: action.payload }) }));
   }
 
   if (view.message) blocks.push({ t: "Text", label: view.message, variant: "caption" });
-  blocks.push({ t: "Divider" });
-
-  if (inputs && Array.isArray(inputs)) {
-    inputs.forEach(input => { blocks.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder }); });
-  }
-
-  if (actions && Array.isArray(actions) && actions.length > 0) {
-    actions.forEach(action => {
-      blocks.push({ t: "Btn", label: action.label || "Action", variant: action.variant || "outline", icon: action.icon, onClick: JSON.stringify({ tool: action.tool, payload: action.payload }) });
-    });
-  }
 
   return { blocks };
 };
@@ -154,13 +171,9 @@ export default function App() {
     let newData = { ...currentData };
     if (!payload) return newData;
 
-    // --- NEW CRUD OPERATIONS ---
-
     if (toolName === "delete_from_list") {
       const { key, index } = payload;
-      if (Array.isArray(newData[key])) {
-          newData[key] = newData[key].filter((_, i) => i !== index);
-      }
+      if (Array.isArray(newData[key])) { newData[key] = newData[key].filter((_, i) => i !== index); }
       return newData;
     }
 
@@ -168,7 +181,6 @@ export default function App() {
       const { key, index, field } = payload;
       if (Array.isArray(newData[key]) && newData[key][index]) {
           const currentValue = newData[key][index][field];
-          // We use a fast browser prompt for edits to maintain high efficiency
           const userInput = window.prompt(`Edit value for this entry:`, currentValue);
           if (userInput !== null && userInput.trim() !== "") {
               newData[key][index][field] = isNaN(Number(userInput)) ? userInput : Number(userInput);
@@ -176,8 +188,6 @@ export default function App() {
       }
       return newData;
     }
-
-    // --- EXISTING OPERATIONS ---
 
     if (toolName === "append_to_list") {
       const { key, item } = payload;
@@ -334,7 +344,7 @@ export default function App() {
         
         <div className="flex-1 p-6 overflow-y-auto block relative pb-24">
           {loading && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-medium z-50 flex items-center gap-2 shadow-xl"><Loader2 size={14} className="animate-spin"/> Thinking...</div>}
-          {activeApp && <div className="w-full max-w-md mx-auto"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} onInputChange={handleInputChange} formState={formState} disabled={rateLimitTimer > 0} /></div>}
+          {activeApp && <div className="w-full mx-auto"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} onInputChange={handleInputChange} formState={formState} disabled={rateLimitTimer > 0} /></div>}
         </div>
 
         <div className="absolute bottom-6 left-6 z-30">
