@@ -80,39 +80,31 @@ const safeParse = (input) => {
   catch (e) { try { return JSON.parse(input.replace(/'/g, '"')); } catch (e2) { return {}; } }
 };
 
-// --- THE SMART ADAPTER (DECLARATIVE MAGIC) ---
 const transformToBlocks = (appSchema) => {
   const { data = {}, view = {}, inputs = [], actions = [] } = appSchema;
   const blocks = [];
 
   blocks.push({ t: "Header", label: appSchema.title || "App", icon: view.icon || "Sparkles", variant: "hero" });
 
-  // SMART DETECTOR: Check if the AI is managing an Array (List of items)
   const listKey = Object.keys(data).find(k => Array.isArray(data[k]));
   
   if (listKey) {
       const arr = data[listKey];
       let total = 0;
       
-      // Auto-calculate the total sum of the array to show as a massive Hero Stat
       if (arr.length > 0) {
           const numKey = Object.keys(arr[0]).find(k => typeof arr[0][k] === 'number');
           if (numKey) total = arr.reduce((sum, item) => sum + (item[numKey] || 0), 0);
-          else total = arr.length; // Fallback to counting items if no numbers
+          else total = arr.length; 
       }
       
       blocks.push({ t: "Stat", label: `Total ${listKey}`, value: total });
+      if (arr.length > 1) blocks.push({ t: "Chart", data: arr });
       
-      // Auto-inject the Chart if we have enough data points
-      if (arr.length > 1) {
-          blocks.push({ t: "Chart", data: arr });
-      }
-      
-      // Auto-inject the historical DataList
-      blocks.push({ t: "DataList", data: arr });
+      // We pass the listKey here so the CRUD actions know which array to target
+      blocks.push({ t: "DataList", data: arr, dataKey: listKey }); 
       
   } else if (view.layout === "hero_center") {
-      // Fallback for simple (non-array) apps
       const keys = Object.keys(data);
       let mainKey = keys.find(k => k !== 'unit') || "count";
       blocks.push({ t: "Stat", label: mainKey, value: `${data[mainKey] || 0} ${data.unit || ''}`.trim() });
@@ -121,7 +113,6 @@ const transformToBlocks = (appSchema) => {
   if (view.message) blocks.push({ t: "Text", label: view.message, variant: "caption" });
   blocks.push({ t: "Divider" });
 
-  // Render Inputs & Buttons at the bottom
   if (inputs && Array.isArray(inputs)) {
     inputs.forEach(input => { blocks.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder }); });
   }
@@ -163,29 +154,48 @@ export default function App() {
     let newData = { ...currentData };
     if (!payload) return newData;
 
-    // THE NEW ARRAY TOOL: Appending items to a history list
+    // --- NEW CRUD OPERATIONS ---
+
+    if (toolName === "delete_from_list") {
+      const { key, index } = payload;
+      if (Array.isArray(newData[key])) {
+          newData[key] = newData[key].filter((_, i) => i !== index);
+      }
+      return newData;
+    }
+
+    if (toolName === "edit_in_list") {
+      const { key, index, field } = payload;
+      if (Array.isArray(newData[key]) && newData[key][index]) {
+          const currentValue = newData[key][index][field];
+          // We use a fast browser prompt for edits to maintain high efficiency
+          const userInput = window.prompt(`Edit value for this entry:`, currentValue);
+          if (userInput !== null && userInput.trim() !== "") {
+              newData[key][index][field] = isNaN(Number(userInput)) ? userInput : Number(userInput);
+          }
+      }
+      return newData;
+    }
+
+    // --- EXISTING OPERATIONS ---
+
     if (toolName === "append_to_list") {
       const { key, item } = payload;
       let newItem = { ...item };
 
-      // Swap any $INPUT magic strings with the real typed values
       for (let k in newItem) {
         if (typeof newItem[k] === 'string' && newItem[k].startsWith("$INPUT:")) {
           const inputId = newItem[k].replace("$INPUT:", "");
           const typedValue = formState[inputId];
-          if (typedValue === undefined || typedValue.trim() === "") return currentData; // Abort if user left input empty
+          if (typedValue === undefined || typedValue.trim() === "") return currentData; 
           newItem[k] = isNaN(Number(typedValue)) ? typedValue : Number(typedValue);
         }
       }
-      // Add an automatic timestamp to the history
       newItem.timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      
-      // Save it back to the data state
       newData[key] = Array.isArray(newData[key]) ? [...newData[key], newItem] : [newItem];
       return newData;
     }
 
-    // ORIGINAL TOOLS
     let finalValue = payload.value;
     if (typeof finalValue === 'string' && finalValue.startsWith("$INPUT:")) {
         const inputId = finalValue.replace("$INPUT:", "");
@@ -217,7 +227,7 @@ export default function App() {
     };
 
     setApps(prev => prev.map(a => a.id === activeAppId ? updatedApp : a));
-    setFormState({}); // Clear forms after save
+    setFormState({}); 
   };
 
   const handleSend = async () => {
