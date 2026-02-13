@@ -9,7 +9,7 @@ const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
     thought: { type: SchemaType.STRING },
-    message: { type: SchemaType.STRING }, // THE FIX: A friendly message for the chat UI
+    message: { type: SchemaType.STRING }, 
     app: {
       type: SchemaType.OBJECT,
       properties: {
@@ -24,7 +24,19 @@ const RESPONSE_SCHEMA = {
             icon: { type: SchemaType.STRING },
             message: { type: SchemaType.STRING }
           },
-          required: ["layout", "theme"] // AI cannot skip layout anymore
+          required: ["layout", "theme"] 
+        },
+        // NEW: The AI can now explicitly request input fields
+        inputs: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              id: { type: SchemaType.STRING },
+              label: { type: SchemaType.STRING },
+              placeholder: { type: SchemaType.STRING }
+            }
+          }
         },
         actions: {
           type: SchemaType.ARRAY,
@@ -37,11 +49,11 @@ const RESPONSE_SCHEMA = {
               tool: { type: SchemaType.STRING }, 
               payload: { type: SchemaType.STRING } 
             },
-            required: ["label", "tool", "payload", "variant"] // AI MUST generate valid buttons
+            required: ["label", "tool", "payload", "variant"] 
           }
         }
       },
-      required: ["title", "type", "data", "view", "actions"] // AI MUST include all core app parts
+      required: ["title", "type", "data", "view", "actions"] 
     }
   },
   required: ["thought", "message", "app"]
@@ -52,81 +64,57 @@ You are the Architect of a Polymorphic OS.
 Map User Intent to the Universal App Schema.
 
 CRITICAL JSON STRING RULES:
-The "data" and "payload" fields MUST be valid stringified JSON. You MUST use escaped double quotes.
-- WRONG: "{'count': 0}"
-- RIGHT: "{\\"count\\": 0}"
+The "data" and "payload" fields MUST be valid stringified JSON. Use escaped double quotes.
 
 AVAILABLE TOOLS (For the payload):
-- "update_data": { "key": "string", "operation": "add" | "set" | "append", "value": any }
+- "update_data": { "key": "string", "operation": "add" | "set", "value": any }
 - "reset_data": { "key": "string", "value": any }
 
-EXAMPLE:
-User: "Make a coffee counter"
-Output:
+DECLARATIVE INPUTS (How to ask the user to type something):
+If you need the user to type a value (like a custom amount or a text note), do TWO things:
+1. Define a text box in the "inputs" array with a unique "id".
+2. In your action's payload "value", use the magic string "$INPUT:your_id".
+
+EXAMPLE OF CUSTOM INPUT:
 {
-  "thought": "I need a tracker layout with an add button.",
-  "message": "I've set up your coffee counter! Tap the button to log a cup.",
-  "app": {
-    "title": "Coffee Tracker",
-    "type": "tracker",
-    "data": "{\\"cups\\": 0}",
-    "view": { "layout": "hero_center", "theme": "ocean", "icon": "Coffee" },
-    "actions": [
-      { "label": "+1 Coffee", "icon": "Plus", "variant": "primary", "tool": "update_data", "payload": "{\\"key\\": \\"cups\\", \\"operation\\": \\"add\\", \\"value\\": 1}" },
-      { "label": "Reset", "icon": "Trash2", "variant": "ghost", "tool": "reset_data", "payload": "{\\"key\\": \\"cups\\", \\"value\\": 0}" }
-    ]
-  }
+  "inputs": [{ "id": "custom_cups", "label": "Custom Amount", "placeholder": "e.g. 5" }],
+  "actions": [{ "label": "Add", "variant": "primary", "tool": "update_data", "payload": "{\\"key\\": \\"cups\\", \\"operation\\": \\"add\\", \\"value\\": \\"$INPUT:custom_cups\\"}" }]
 }
 `;
 
-// --- SMART PARSER ---
-// Auto-fixes AI hallucinations like single-quotes or broken JSON
 const safeParse = (input) => {
   if (!input) return {};
   if (typeof input === 'object') return input; 
-  try { 
-    return JSON.parse(input); 
-  } catch (e) { 
-    try {
-      // AI sometimes uses single quotes instead of double quotes, let's auto-fix it
-      return JSON.parse(input.replace(/'/g, '"'));
-    } catch (e2) {
-      return {}; 
-    }
-  }
+  try { return JSON.parse(input); } 
+  catch (e) { try { return JSON.parse(input.replace(/'/g, '"')); } catch (e2) { return {}; } }
 };
 
 const transformToBlocks = (appSchema) => {
-  const { data = {}, view = {}, actions = [] } = appSchema;
+  const { data = {}, view = {}, inputs = [], actions = [] } = appSchema;
   const blocks = [];
 
   blocks.push({ t: "Header", label: appSchema.title || "App", icon: view.icon || "Sparkles", variant: "hero" });
 
   if (view.layout === "hero_center") {
-    // FALLBACK PROTECTION: Ensure we ALWAYS show a stat, even if AI gave empty data
     const keys = Object.keys(data);
-    let mainKey = keys.find(k => k !== 'unit');
-    
-    if (!mainKey) {
-      mainKey = "count";
-      data[mainKey] = 0;
-    }
+    let mainKey = keys.find(k => k !== 'unit') || "count";
+    if (!data[mainKey]) data[mainKey] = 0;
 
     blocks.push({ 
       t: "Stat", 
       label: mainKey, 
-      value: `${data[mainKey]} ${data.unit || ''}`.trim(), 
-      variant: "hero" 
+      value: `${data[mainKey]} ${data.unit || ''}`.trim()
     });
-  } else if (view.layout === "list_vertical") {
-     blocks.push({ t: "Text", label: "List view coming soon...", variant: "caption" });
   }
 
-  if (view.message) {
-    blocks.push({ t: "Text", label: view.message, variant: "caption" });
-  }
+  if (view.message) blocks.push({ t: "Text", label: view.message, variant: "caption" });
 
-  blocks.push({ t: "Divider" });
+  // Render Inputs right before the buttons
+  if (inputs && Array.isArray(inputs)) {
+    inputs.forEach(input => {
+      blocks.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder });
+    });
+  }
 
   if (actions && Array.isArray(actions) && actions.length > 0) {
     actions.forEach(action => {
@@ -139,7 +127,6 @@ const transformToBlocks = (appSchema) => {
       });
     });
   } else {
-    // VISUAL WARNING: If the AI STILL fails to generate buttons
     blocks.push({ t: "Text", label: "No actions generated. Try asking again.", variant: "caption" });
   }
 
@@ -152,6 +139,9 @@ export default function App() {
   const [messages, setMessages] = useState([{ role: 'model', text: "Ready. What shall we build?" }]);
   const [input, setInput] = useState('');
   
+  // NEW: Temporary memory for what the user is typing in the generated text boxes
+  const [formState, setFormState] = useState({});
+
   const [activeAppId, setActiveAppId] = useState(null); 
   const [view, setView] = useState('chat'); 
   const [loading, setLoading] = useState(false);
@@ -165,16 +155,42 @@ export default function App() {
 
   const activeApp = apps.find(a => a.id === activeAppId);
 
+  // Updates temporary form memory as the user types
+  const handleInputChange = (id, value) => {
+    setFormState(prev => ({ ...prev, [id]: value }));
+  };
+
+  // --- UPGRADED LOGIC ENGINE ---
   const executeTool = (toolName, payload, currentData) => {
     let newData = { ...currentData };
-    if (toolName === "update_data" && payload) {
-      const { key, operation, value } = payload;
-      if (operation === "add") newData[key] = (Number(newData[key]) || 0) + Number(value);
-      else if (operation === "set") newData[key] = value;
+    if (!payload) return newData;
+
+    let finalValue = payload.value;
+
+    // THE PRO RESOLVER: Swap the magic string for the actual typed value
+    if (typeof finalValue === 'string' && finalValue.startsWith("$INPUT:")) {
+        const inputId = finalValue.replace("$INPUT:", "");
+        const typedValue = formState[inputId];
+        
+        // If they didn't type anything, safely abort the action
+        if (typedValue === undefined || typedValue.trim() === "") {
+             return currentData; 
+        }
+        
+        // Auto-detect if it's a number so math works
+        finalValue = isNaN(Number(typedValue)) ? typedValue : Number(typedValue);
     }
-    if (toolName === "reset_data" && payload) {
-        newData[payload.key] = payload.value;
+
+    if (toolName === "update_data") {
+      const { key, operation } = payload;
+      if (operation === "add") newData[key] = (Number(newData[key]) || 0) + Number(finalValue);
+      else if (operation === "set") newData[key] = finalValue;
     }
+    
+    if (toolName === "reset_data") {
+        newData[payload.key] = finalValue !== undefined ? finalValue : payload.value;
+    }
+    
     return newData;
   };
 
@@ -193,6 +209,9 @@ export default function App() {
     };
 
     setApps(prev => prev.map(a => a.id === activeAppId ? updatedApp : a));
+    
+    // Clear the form fields after successful button click!
+    setFormState({});
   };
 
   const handleSend = async () => {
@@ -248,7 +267,6 @@ export default function App() {
              setActiveAppId(newApp.id);
         }
         setView('app');
-        // THE FIX: We now show the friendly message instead of the raw thought
         setMessages(prev => [...prev, { role: 'model', text: responseData.message || "App updated." }]);
       }
     } catch (e) {
@@ -292,7 +310,8 @@ export default function App() {
         <div className="flex-1 p-6 overflow-y-auto flex items-center justify-center relative">
           {loading && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-medium z-50 flex items-center gap-2 shadow-xl"><Loader2 size={14} className="animate-spin"/> Thinking...</div>}
           
-          {activeApp && <div className="w-full max-w-md"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} disabled={rateLimitTimer > 0} /></div>}
+          {/* PASSED formState and handleInputChange down to the Renderer! */}
+          {activeApp && <div className="w-full max-w-md"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} onInputChange={handleInputChange} formState={formState} disabled={rateLimitTimer > 0} /></div>}
         </div>
       </div>
 
