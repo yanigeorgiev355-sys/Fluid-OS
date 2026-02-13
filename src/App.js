@@ -5,8 +5,9 @@ import A2UIRenderer from './A2UIRenderer';
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- THE UNIVERSAL SCHEMA ---
-// This defines the "Shape" of every app in your OS.
+// --- THE UNIVERSAL SCHEMA (FIXED) ---
+// We use STRING for 'data' and 'payload' to avoid strict schema errors.
+// The AI will write stringified JSON, and we will parse it.
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
@@ -17,10 +18,9 @@ const RESPONSE_SCHEMA = {
         title: { type: SchemaType.STRING },
         type: { type: SchemaType.STRING, enum: ["tracker", "list", "dashboard", "note"] },
         
-        // 1. DATA: The raw facts (e.g., count: 500)
-        data: { type: SchemaType.OBJECT },
+        // FIX: defined as STRING to allow flexible JSON structure
+        data: { type: SchemaType.STRING }, 
         
-        // 2. VIEW: How it looks (e.g., layout: 'hero')
         view: {
           type: SchemaType.OBJECT,
           properties: {
@@ -31,7 +31,6 @@ const RESPONSE_SCHEMA = {
           }
         },
 
-        // 3. ACTIONS: What it does (e.g., tool: 'update_data')
         actions: {
           type: SchemaType.ARRAY,
           items: {
@@ -40,8 +39,9 @@ const RESPONSE_SCHEMA = {
               label: { type: SchemaType.STRING },
               icon: { type: SchemaType.STRING },
               variant: { type: SchemaType.STRING, enum: ["primary", "secondary", "ghost", "danger", "gradient"] },
-              tool: { type: SchemaType.STRING }, // The function name (e.g., 'update_data')
-              payload: { type: SchemaType.OBJECT } // Arguments for the function
+              tool: { type: SchemaType.STRING }, 
+              // FIX: defined as STRING to allow flexible arguments
+              payload: { type: SchemaType.STRING } 
             }
           }
         }
@@ -53,15 +53,18 @@ const RESPONSE_SCHEMA = {
 
 const SYSTEM_PROMPT = `
 You are the Architect of a Polymorphic OS.
-You do not write code. You configure STATE.
 Your goal is to map User Intent -> Universal App Schema.
 
+CRITICAL INSTRUCTION:
+- The fields "data" and "payload" must be returned as JSON STRINGS.
+- Example: "data": "{\"count\": 0}"
+
 UNIVERSAL SCHEMA RULES:
-1. "data": Pure JSON. The single source of truth.
+1. "data": The single source of truth (JSON String).
 2. "view": Visual preferences.
 3. "actions": Buttons that trigger TOOLS.
 
-AVAILABLE TOOLS (Use these in "actions"):
+AVAILABLE TOOLS (Use these in "actions" payload):
 - "update_data": { "key": "string", "operation": "add" | "set" | "append", "value": any }
 - "reset_data": { "key": "string", "value": any }
 
@@ -74,21 +77,20 @@ EXAMPLE:
 User: "Water tracker"
 Output:
 {
-  "thought": "User wants a tracker. I will use 'hero_center' layout with a water theme.",
+  "thought": "User wants a tracker. I will use 'hero_center'.",
   "app": {
     "title": "Hydration",
     "type": "tracker",
-    "data": { "current": 0, "unit": "ml" },
+    "data": "{\"current\": 0, \"unit\": \"ml\"}",
     "view": { "layout": "hero_center", "theme": "ocean", "icon": "Droplets", "message": "Stay hydrated" },
     "actions": [
-      { "label": "+250ml", "variant": "gradient", "tool": "update_data", "payload": { "key": "current", "operation": "add", "value": 250 } }
+      { "label": "+250ml", "variant": "gradient", "tool": "update_data", "payload": "{\"key\": \"current\", \"operation\": \"add\", \"value\": 250}" }
     ]
   }
 }
 `;
 
 // --- ADAPTER: Schema -> UI Blocks ---
-// This function bridges the new "Universal Schema" to your existing "Stitch" Renderer.
 const transformToBlocks = (appSchema) => {
   const { data, view, actions } = appSchema;
   const blocks = [];
@@ -99,7 +101,7 @@ const transformToBlocks = (appSchema) => {
   // 2. Data/View Mapping
   if (view.layout === "hero_center") {
     // For trackers, we show the main data point big
-    const mainKey = Object.keys(data)[0]; // simplistic guess: first key is main
+    const mainKey = Object.keys(data)[0]; 
     blocks.push({ 
       t: "Stat", 
       label: mainKey, 
@@ -107,8 +109,8 @@ const transformToBlocks = (appSchema) => {
       variant: "hero" 
     });
   } else if (view.layout === "list_vertical") {
-    // Render list items (if data is array)
-    // TODO: Implement list rendering in Phase 3
+     // Placeholder for future list logic
+     blocks.push({ t: "Text", label: "List view coming soon...", variant: "caption" });
   }
 
   if (view.message) {
@@ -120,6 +122,7 @@ const transformToBlocks = (appSchema) => {
   // 3. Action Buttons
   if (actions) {
     actions.forEach(action => {
+      // NOTE: payload is already an object here because we parsed it in handleSend
       blocks.push({
         t: "Btn",
         label: action.label,
@@ -153,26 +156,34 @@ export default function App() {
 
   const activeApp = apps.find(a => a.id === activeAppId);
 
-  // --- THE LOGIC ENGINE (Simulated for now) ---
+  // --- THE LOGIC ENGINE ---
+  // This replaces the "Placeholder". It runs locally!
   const executeTool = (toolName, payload, currentData) => {
     let newData = { ...currentData };
     
-    // This is where "1+1" happens LOCALLY in JavaScript!
+    // TOOL: Update Data (Add/Set)
     if (toolName === "update_data") {
-      if (payload.operation === "add") {
-        newData[payload.key] = (newData[payload.key] || 0) + payload.value;
-      } else if (payload.operation === "set") {
-        newData[payload.key] = payload.value;
+      const { key, operation, value } = payload;
+      
+      if (operation === "add") {
+        newData[key] = (Number(newData[key]) || 0) + Number(value);
+      } else if (operation === "set") {
+        newData[key] = value;
       }
+    }
+    
+    // TOOL: Reset Data
+    if (toolName === "reset_data") {
+        const { key, value } = payload;
+        newData[key] = value;
     }
     
     return newData;
   };
 
-  const handleAppAction = async (actionJsonString, eventType) => {
+  const handleAppAction = async (actionJsonString) => {
     if (!activeApp) return;
 
-    // 1. Parse the action (It's not just a string anymore, it's a Tool Call)
     let action;
     try {
       action = JSON.parse(actionJsonString);
@@ -181,20 +192,18 @@ export default function App() {
       return;
     }
 
-    // 2. RUN LOGIC LOCALLY (Immediate Update!)
+    // 1. RUN LOGIC LOCALLY
     const newData = executeTool(action.tool, action.payload, activeApp.universalSchema.data);
 
-    // 3. Update State Immediately (Optimistic UI)
+    // 2. UPDATE STATE (Optimistic UI)
     const updatedApp = {
       ...activeApp,
       universalSchema: { ...activeApp.universalSchema, data: newData },
-      // Re-run the adapter to generate new UI blocks from new data
+      // Re-run adapter with new data
       blueprint: transformToBlocks({ ...activeApp.universalSchema, data: newData })
     };
 
     setApps(prev => prev.map(a => a.id === activeAppId ? updatedApp : a));
-
-    // NOTE: In the future, this is where we would save `newData` to Firebase
   };
 
   const handleSend = async () => {
@@ -218,22 +227,34 @@ export default function App() {
       // Context aware prompt
       let dynamicPrompt = SYSTEM_PROMPT;
       if (activeApp) {
+        // We re-serialize the data for the prompt so Gemini sees the latest state
         dynamicPrompt += `\n[CURRENT APP CONTEXT]:\nTitle: ${activeApp.title}\nData: ${JSON.stringify(activeApp.universalSchema.data)}`;
       }
 
       const chat = model.startChat({ history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] });
       const result = await chat.sendMessage(userText);
-      const data = JSON.parse(result.response.text());
+      const rawText = result.response.text();
+      const responseData = JSON.parse(rawText);
 
-      if (data.app) {
-        // Convert the "Universal Schema" to "Visual Blocks"
-        const uiBlueprint = transformToBlocks(data.app);
+      if (responseData.app) {
+        // --- PARSING FIX ---
+        // We parse the stringified JSON fields back into Objects
+        const parsedApp = {
+             ...responseData.app,
+             data: JSON.parse(responseData.app.data || '{}'),
+             actions: responseData.app.actions.map(a => ({
+                 ...a,
+                 payload: JSON.parse(a.payload || '{}')
+             }))
+        };
+
+        const uiBlueprint = transformToBlocks(parsedApp);
 
         const newApp = { 
           id: activeAppId || Date.now(), 
-          title: data.app.title, 
-          universalSchema: data.app, // Store the Brain
-          blueprint: uiBlueprint     // Store the Body
+          title: parsedApp.title, 
+          universalSchema: parsedApp, // Store the structured brain
+          blueprint: uiBlueprint      // Store the visual body
         };
 
         if (activeAppId) {
@@ -243,9 +264,10 @@ export default function App() {
              setActiveAppId(newApp.id);
         }
         setView('app');
-        setMessages(prev => [...prev, { role: 'model', text: data.thought || "App updated." }]);
+        setMessages(prev => [...prev, { role: 'model', text: responseData.thought || "App updated." }]);
       }
     } catch (e) {
+      console.error(e);
       if (e.message.includes('429')) setRateLimitTimer(30);
       setMessages(prev => [...prev, { role: 'system', text: "Error: " + e.message }]);
     }
@@ -287,7 +309,7 @@ export default function App() {
         <div className="flex-1 p-6 overflow-y-auto flex items-center justify-center relative">
           {loading && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-medium z-50 flex items-center gap-2 shadow-xl"><Loader2 size={14} className="animate-spin"/> Thinking...</div>}
           
-          {/* RENDERER - Now receives the TRANSFORMED blueprint */}
+          {/* RENDERER */}
           {activeApp && <div className="w-full max-w-md"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} disabled={rateLimitTimer > 0} /></div>}
         </div>
       </div>
