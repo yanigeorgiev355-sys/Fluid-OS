@@ -9,6 +9,7 @@ const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
     thought: { type: SchemaType.STRING },
+    message: { type: SchemaType.STRING }, // THE FIX: A friendly message for the chat UI
     app: {
       type: SchemaType.OBJECT,
       properties: {
@@ -22,7 +23,8 @@ const RESPONSE_SCHEMA = {
             theme: { type: SchemaType.STRING, enum: ["ocean", "sunset", "monochrome", "danger"] },
             icon: { type: SchemaType.STRING },
             message: { type: SchemaType.STRING }
-          }
+          },
+          required: ["layout", "theme"] // AI cannot skip layout anymore
         },
         actions: {
           type: SchemaType.ARRAY,
@@ -34,66 +36,86 @@ const RESPONSE_SCHEMA = {
               variant: { type: SchemaType.STRING, enum: ["primary", "secondary", "ghost", "danger", "gradient"] },
               tool: { type: SchemaType.STRING }, 
               payload: { type: SchemaType.STRING } 
-            }
+            },
+            required: ["label", "tool", "payload", "variant"] // AI MUST generate valid buttons
           }
         }
-      }
+      },
+      required: ["title", "type", "data", "view", "actions"] // AI MUST include all core app parts
     }
   },
-  required: ["thought", "app"]
+  required: ["thought", "message", "app"]
 };
 
 const SYSTEM_PROMPT = `
 You are the Architect of a Polymorphic OS.
-Your goal is to map User Intent -> Universal App Schema.
+Map User Intent to the Universal App Schema.
 
-CRITICAL INSTRUCTION:
-- The fields "data" and "payload" must be returned as JSON STRINGS.
-- Example: "data": "{\\"count\\": 0}"
+CRITICAL JSON STRING RULES:
+The "data" and "payload" fields MUST be valid stringified JSON. You MUST use escaped double quotes.
+- WRONG: "{'count': 0}"
+- RIGHT: "{\\"count\\": 0}"
 
-UNIVERSAL SCHEMA RULES:
-1. "data": The single source of truth (JSON String).
-2. "view": Visual preferences.
-3. "actions": Buttons that trigger TOOLS.
-
-AVAILABLE TOOLS (Use these in "actions" payload):
+AVAILABLE TOOLS (For the payload):
 - "update_data": { "key": "string", "operation": "add" | "set" | "append", "value": any }
 - "reset_data": { "key": "string", "value": any }
 
-LAYOUT STRATEGIES:
-- "hero_center": Best for single counters (Water, Habits). Shows one big number.
-- "list_vertical": Best for tasks, logs, history.
-- "grid_2col": Best for dashboards.
-
 EXAMPLE:
-User: "Water tracker"
+User: "Make a coffee counter"
 Output:
 {
-  "thought": "User wants a tracker. I will use 'hero_center'.",
+  "thought": "I need a tracker layout with an add button.",
+  "message": "I've set up your coffee counter! Tap the button to log a cup.",
   "app": {
-    "title": "Hydration",
+    "title": "Coffee Tracker",
     "type": "tracker",
-    "data": "{\\"current\\": 0, \\"unit\\": \\"ml\\"}",
-    "view": { "layout": "hero_center", "theme": "ocean", "icon": "Droplets", "message": "Stay hydrated" },
+    "data": "{\\"cups\\": 0}",
+    "view": { "layout": "hero_center", "theme": "ocean", "icon": "Coffee" },
     "actions": [
-      { "label": "+250ml", "variant": "gradient", "tool": "update_data", "payload": "{\\"key\\": \\"current\\", \\"operation\\": \\"add\\", \\"value\\": 250}" }
+      { "label": "+1 Coffee", "icon": "Plus", "variant": "primary", "tool": "update_data", "payload": "{\\"key\\": \\"cups\\", \\"operation\\": \\"add\\", \\"value\\": 1}" },
+      { "label": "Reset", "icon": "Trash2", "variant": "ghost", "tool": "reset_data", "payload": "{\\"key\\": \\"cups\\", \\"value\\": 0}" }
     ]
   }
 }
 `;
 
+// --- SMART PARSER ---
+// Auto-fixes AI hallucinations like single-quotes or broken JSON
+const safeParse = (input) => {
+  if (!input) return {};
+  if (typeof input === 'object') return input; 
+  try { 
+    return JSON.parse(input); 
+  } catch (e) { 
+    try {
+      // AI sometimes uses single quotes instead of double quotes, let's auto-fix it
+      return JSON.parse(input.replace(/'/g, '"'));
+    } catch (e2) {
+      return {}; 
+    }
+  }
+};
+
 const transformToBlocks = (appSchema) => {
   const { data = {}, view = {}, actions = [] } = appSchema;
   const blocks = [];
 
-  blocks.push({ t: "Header", label: appSchema.title || "App", icon: view.icon, variant: "hero" });
+  blocks.push({ t: "Header", label: appSchema.title || "App", icon: view.icon || "Sparkles", variant: "hero" });
 
-  if (view.layout === "hero_center" && Object.keys(data).length > 0) {
-    const mainKey = Object.keys(data).find(k => k !== 'unit') || Object.keys(data)[0]; 
+  if (view.layout === "hero_center") {
+    // FALLBACK PROTECTION: Ensure we ALWAYS show a stat, even if AI gave empty data
+    const keys = Object.keys(data);
+    let mainKey = keys.find(k => k !== 'unit');
+    
+    if (!mainKey) {
+      mainKey = "count";
+      data[mainKey] = 0;
+    }
+
     blocks.push({ 
       t: "Stat", 
       label: mainKey, 
-      value: `${data[mainKey] || 0} ${data.unit || ''}`, 
+      value: `${data[mainKey]} ${data.unit || ''}`.trim(), 
       variant: "hero" 
     });
   } else if (view.layout === "list_vertical") {
@@ -106,27 +128,22 @@ const transformToBlocks = (appSchema) => {
 
   blocks.push({ t: "Divider" });
 
-  if (actions && Array.isArray(actions)) {
+  if (actions && Array.isArray(actions) && actions.length > 0) {
     actions.forEach(action => {
       blocks.push({
         t: "Btn",
-        label: action.label,
-        variant: action.variant,
+        label: action.label || "Action",
+        variant: action.variant || "outline",
         icon: action.icon,
         onClick: JSON.stringify({ tool: action.tool, payload: action.payload })
       });
     });
+  } else {
+    // VISUAL WARNING: If the AI STILL fails to generate buttons
+    blocks.push({ t: "Text", label: "No actions generated. Try asking again.", variant: "caption" });
   }
 
   return { blocks };
-};
-
-// --- BULLETPROOF PARSER ---
-// This prevents crashes if the AI hallucinates bad JSON or forgets fields
-const safeParse = (input) => {
-  if (!input) return {};
-  if (typeof input === 'object') return input; 
-  try { return JSON.parse(input); } catch (e) { return {}; }
 };
 
 export default function App() {
@@ -206,11 +223,9 @@ export default function App() {
       const responseData = JSON.parse(result.response.text());
 
       if (responseData.app) {
-        // SAFE PARSING APPLIED HERE
         const parsedApp = {
              ...responseData.app,
              data: safeParse(responseData.app.data),
-             // Safely fallback to an empty array if AI forgets 'actions'
              actions: (responseData.app.actions || []).map(a => ({
                  ...a,
                  payload: safeParse(a.payload)
@@ -233,7 +248,8 @@ export default function App() {
              setActiveAppId(newApp.id);
         }
         setView('app');
-        setMessages(prev => [...prev, { role: 'model', text: responseData.thought || "App updated." }]);
+        // THE FIX: We now show the friendly message instead of the raw thought
+        setMessages(prev => [...prev, { role: 'model', text: responseData.message || "App updated." }]);
       }
     } catch (e) {
       console.error(e);
