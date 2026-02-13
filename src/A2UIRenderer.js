@@ -70,7 +70,7 @@ const COMPONENTS = {
     );
   },
 
-  DataList: ({ data, dataKey, onAction }) => {
+    DataList: ({ data, dataKey, onAction }) => {
     if (!data || !Array.isArray(data) || data.length === 0) {
       return <div className="p-6 text-center text-slate-400 text-sm bg-slate-50 rounded-2xl">No history yet. Start tracking!</div>;
     }
@@ -78,22 +78,41 @@ const COMPONENTS = {
       <div className="rounded-2xl border border-slate-100 overflow-hidden">
         {data.slice().reverse().map((item, i) => {
            const originalIndex = data.length - 1 - i; 
+           
+           // Extract the number
            const numKey = Object.keys(item).find(k => typeof item[k] === 'number');
-           const strKey = Object.keys(item).find(k => typeof item[k] === 'string' && k !== 'timestamp');
+           
+           // Extract the strings (ignoring our automatic timestamp)
+           const stringKeys = Object.keys(item).filter(k => typeof item[k] === 'string' && k !== 'timestamp');
+           
+           // The first string is the main label, the second string becomes our BADGE
+           const mainStrKey = stringKeys[0];
+           const badgeKey = stringKeys[1]; 
            
            return (
-             <div key={originalIndex} className="p-4 border-b border-slate-50 last:border-0 flex justify-between items-center hover:bg-slate-50 transition-colors group">
-                <div className="flex flex-col">
-                  <span className="font-bold text-slate-700 capitalize">{item[strKey] || 'Entry'}</span>
-                  <span className="text-xs text-slate-400 font-medium">{item.timestamp}</span>
-                </div>
+             <div key={originalIndex} className="p-4 border-b border-slate-50 last:border-0 flex flex-col hover:bg-slate-50 transition-colors group relative">
                 
-                <div className="flex items-center gap-4">
-                  <span className="font-extrabold text-blue-600">{item[numKey] !== undefined ? item[numKey] : ''}</span>
+                <div className="flex justify-between items-center mb-1">
+                  <span className="font-bold text-slate-800 capitalize">{item[mainStrKey] || 'Entry'}</span>
+                  <span className="font-extrabold text-blue-600 text-lg">{item[numKey] !== undefined ? item[numKey] : ''}</span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400 font-medium">{item.timestamp}</span>
+                    
+                    {/* THE NEW PRO BADGE */}
+                    {badgeKey && item[badgeKey] && (
+                      <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold uppercase tracking-wider rounded-full">
+                        {item[badgeKey]}
+                      </span>
+                    )}
+                  </div>
                   
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => onAction(JSON.stringify({ tool: 'edit_in_list', payload: { key: dataKey, index: originalIndex, field: numKey || strKey } }))} className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-all"><Icons.Edit2 size={16}/></button>
-                    <button onClick={() => onAction(JSON.stringify({ tool: 'delete_from_list', payload: { key: dataKey, index: originalIndex } }))} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"><Icons.Trash2 size={16}/></button>
+                  {/* CRUD Actions */}
+                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity absolute right-4 bottom-2 bg-white/80 backdrop-blur-sm p-1 rounded-full shadow-sm">
+                    <button onClick={() => onAction(JSON.stringify({ tool: 'edit_in_list', payload: { key: dataKey, index: originalIndex, field: numKey || mainStrKey } }))} className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-all"><Icons.Edit2 size={14}/></button>
+                    <button onClick={() => onAction(JSON.stringify({ tool: 'delete_from_list', payload: { key: dataKey, index: originalIndex } }))} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"><Icons.Trash2 size={14}/></button>
                   </div>
                 </div>
              </div>
@@ -101,7 +120,7 @@ const COMPONENTS = {
         })}
       </div>
     );
-  },
+  },  
 
   Input: ({ id, label, placeholder, value, onInputChange }) => (
     <div className="mb-4 text-left">
