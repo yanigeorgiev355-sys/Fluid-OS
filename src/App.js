@@ -19,7 +19,7 @@ const RESPONSE_SCHEMA = {
         view: {
           type: SchemaType.OBJECT,
           properties: {
-            layout: { type: SchemaType.STRING, enum: ["hero_center", "list_vertical", "grid_2col"] },
+            layout: { type: SchemaType.STRING, enum: ["hero_center", "list_vertical", "grid_2col", "dashboard"] },
             theme: { type: SchemaType.STRING, enum: ["ocean", "sunset", "monochrome", "danger"] },
             icon: { type: SchemaType.STRING },
             message: { type: SchemaType.STRING }
@@ -30,11 +30,7 @@ const RESPONSE_SCHEMA = {
           type: SchemaType.ARRAY,
           items: {
             type: SchemaType.OBJECT,
-            properties: {
-              id: { type: SchemaType.STRING },
-              label: { type: SchemaType.STRING },
-              placeholder: { type: SchemaType.STRING }
-            }
+            properties: { id: { type: SchemaType.STRING }, label: { type: SchemaType.STRING }, placeholder: { type: SchemaType.STRING } }
           }
         },
         actions: {
@@ -42,11 +38,9 @@ const RESPONSE_SCHEMA = {
           items: {
             type: SchemaType.OBJECT,
             properties: {
-              label: { type: SchemaType.STRING },
-              icon: { type: SchemaType.STRING },
+              label: { type: SchemaType.STRING }, icon: { type: SchemaType.STRING },
               variant: { type: SchemaType.STRING, enum: ["primary", "secondary", "ghost", "danger", "gradient"] },
-              tool: { type: SchemaType.STRING }, 
-              payload: { type: SchemaType.STRING } 
+              tool: { type: SchemaType.STRING }, payload: { type: SchemaType.STRING } 
             },
             required: ["label", "tool", "payload", "variant"] 
           }
@@ -55,28 +49,28 @@ const RESPONSE_SCHEMA = {
       required: ["title", "type", "data", "view", "actions"] 
     }
   },
-  // THE FIX: "app" is no longer required! The AI can choose to just send a message.
   required: ["thought", "message"]
 };
 
 const SYSTEM_PROMPT = `
 You are the Architect of a Polymorphic OS.
 
-CONVERSATION VS. BUILDING (CRITICAL):
-- If the user is just chatting, asking a question, or brainstorming, DO NOT output the "app" object. Only return "thought" and "message".
-- If the user explicitly asks to build, create, or update a tool/app, OR if you suggest a tool and they agree, THEN output the full "app" schema.
+CONVERSATION VS BUILDING:
+- If just chatting/brainstorming, DO NOT output the "app" object. Just talk.
+- If the user asks for an app/tool, output the full "app" schema.
 
-CRITICAL JSON STRING RULES:
-The "data" and "payload" fields MUST be valid stringified JSON. Use escaped double quotes.
+CRITICAL JSON RULES:
+"data" and "payload" MUST be stringified JSON using escaped double quotes.
 
 AVAILABLE TOOLS (For the payload):
 - "update_data": { "key": "string", "operation": "add" | "set", "value": any }
 - "reset_data": { "key": "string", "value": any }
+- "append_to_list": { "key": "string", "item": { "amount": "$INPUT:amount_id", "category": "$INPUT:cat_id" } }
 
-DECLARATIVE INPUTS (How to ask the user to type something):
-If you need the user to type a value, do TWO things:
-1. Define a text box in the "inputs" array with a unique "id".
-2. In your action's payload "value", use the magic string "$INPUT:your_id".
+PRO TIP FOR TRACKERS (FINANCE, DIET, HABITS):
+To build a useful tracker with charts and history, ALWAYS use the "append_to_list" tool to store an array of objects. 
+Example Payload: "{\\"key\\": \\"history\\", \\"item\\": {\\"amount\\": \\"$INPUT:amount\\", \\"name\\": \\"$INPUT:name\\"}}"
+Our system will AUTOMATICALLY render the Chart and History List for you if it detects an array in the data!
 `;
 
 const safeParse = (input) => {
@@ -86,44 +80,56 @@ const safeParse = (input) => {
   catch (e) { try { return JSON.parse(input.replace(/'/g, '"')); } catch (e2) { return {}; } }
 };
 
+// --- THE SMART ADAPTER (DECLARATIVE MAGIC) ---
 const transformToBlocks = (appSchema) => {
   const { data = {}, view = {}, inputs = [], actions = [] } = appSchema;
   const blocks = [];
 
   blocks.push({ t: "Header", label: appSchema.title || "App", icon: view.icon || "Sparkles", variant: "hero" });
 
-  if (view.layout === "hero_center") {
-    const keys = Object.keys(data);
-    let mainKey = keys.find(k => k !== 'unit') || "count";
-    if (!data[mainKey]) data[mainKey] = 0;
-
-    blocks.push({ 
-      t: "Stat", 
-      label: mainKey, 
-      value: `${data[mainKey]} ${data.unit || ''}`.trim()
-    });
+  // SMART DETECTOR: Check if the AI is managing an Array (List of items)
+  const listKey = Object.keys(data).find(k => Array.isArray(data[k]));
+  
+  if (listKey) {
+      const arr = data[listKey];
+      let total = 0;
+      
+      // Auto-calculate the total sum of the array to show as a massive Hero Stat
+      if (arr.length > 0) {
+          const numKey = Object.keys(arr[0]).find(k => typeof arr[0][k] === 'number');
+          if (numKey) total = arr.reduce((sum, item) => sum + (item[numKey] || 0), 0);
+          else total = arr.length; // Fallback to counting items if no numbers
+      }
+      
+      blocks.push({ t: "Stat", label: `Total ${listKey}`, value: total });
+      
+      // Auto-inject the Chart if we have enough data points
+      if (arr.length > 1) {
+          blocks.push({ t: "Chart", data: arr });
+      }
+      
+      // Auto-inject the historical DataList
+      blocks.push({ t: "DataList", data: arr });
+      
+  } else if (view.layout === "hero_center") {
+      // Fallback for simple (non-array) apps
+      const keys = Object.keys(data);
+      let mainKey = keys.find(k => k !== 'unit') || "count";
+      blocks.push({ t: "Stat", label: mainKey, value: `${data[mainKey] || 0} ${data.unit || ''}`.trim() });
   }
 
   if (view.message) blocks.push({ t: "Text", label: view.message, variant: "caption" });
+  blocks.push({ t: "Divider" });
 
+  // Render Inputs & Buttons at the bottom
   if (inputs && Array.isArray(inputs)) {
-    inputs.forEach(input => {
-      blocks.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder });
-    });
+    inputs.forEach(input => { blocks.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder }); });
   }
 
   if (actions && Array.isArray(actions) && actions.length > 0) {
     actions.forEach(action => {
-      blocks.push({
-        t: "Btn",
-        label: action.label || "Action",
-        variant: action.variant || "outline",
-        icon: action.icon,
-        onClick: JSON.stringify({ tool: action.tool, payload: action.payload })
-      });
+      blocks.push({ t: "Btn", label: action.label || "Action", variant: action.variant || "outline", icon: action.icon, onClick: JSON.stringify({ tool: action.tool, payload: action.payload }) });
     });
-  } else {
-    blocks.push({ t: "Text", label: "No actions generated. Try asking again.", variant: "caption" });
   }
 
   return { blocks };
@@ -141,7 +147,6 @@ export default function App() {
   const [rateLimitTimer, setRateLimitTimer] = useState(0); 
   const [settingsOpen, setSettingsOpen] = useState(!apiKey);
   const messagesEndRef = useRef(null);
-  
   const [isInputExpanded, setIsInputExpanded] = useState(false);
 
   useEffect(() => { localStorage.setItem('neural_apps', JSON.stringify(apps)); }, [apps]);
@@ -158,15 +163,36 @@ export default function App() {
     let newData = { ...currentData };
     if (!payload) return newData;
 
-    let finalValue = payload.value;
+    // THE NEW ARRAY TOOL: Appending items to a history list
+    if (toolName === "append_to_list") {
+      const { key, item } = payload;
+      let newItem = { ...item };
 
+      // Swap any $INPUT magic strings with the real typed values
+      for (let k in newItem) {
+        if (typeof newItem[k] === 'string' && newItem[k].startsWith("$INPUT:")) {
+          const inputId = newItem[k].replace("$INPUT:", "");
+          const typedValue = formState[inputId];
+          if (typedValue === undefined || typedValue.trim() === "") return currentData; // Abort if user left input empty
+          newItem[k] = isNaN(Number(typedValue)) ? typedValue : Number(typedValue);
+        }
+      }
+      // Add an automatic timestamp to the history
+      newItem.timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      
+      // Save it back to the data state
+      newData[key] = Array.isArray(newData[key]) ? [...newData[key], newItem] : [newItem];
+      return newData;
+    }
+
+    // ORIGINAL TOOLS
+    let finalValue = payload.value;
     if (typeof finalValue === 'string' && finalValue.startsWith("$INPUT:")) {
         const inputId = finalValue.replace("$INPUT:", "");
         const typedValue = formState[inputId];
         if (typedValue === undefined || typedValue.trim() === "") return currentData; 
         finalValue = isNaN(Number(typedValue)) ? typedValue : Number(typedValue);
     }
-
     if (toolName === "update_data") {
       const { key, operation } = payload;
       if (operation === "add") newData[key] = (Number(newData[key]) || 0) + Number(finalValue);
@@ -191,7 +217,7 @@ export default function App() {
     };
 
     setApps(prev => prev.map(a => a.id === activeAppId ? updatedApp : a));
-    setFormState({});
+    setFormState({}); // Clear forms after save
   };
 
   const handleSend = async () => {
@@ -219,7 +245,6 @@ export default function App() {
       const result = await chat.sendMessage(userText);
       const responseData = JSON.parse(result.response.text());
 
-      // THE FIX: Check if the AI actually generated an app blueprint
       if (responseData.app && Object.keys(responseData.app).length > 0) {
         const parsedApp = {
              ...responseData.app,
@@ -236,17 +261,12 @@ export default function App() {
           blueprint: uiBlueprint      
         };
 
-        if (activeAppId) {
-             setApps(prev => prev.map(a => a.id === activeAppId ? newApp : a));
-        } else {
-             setApps(prev => [...prev, newApp]);
-             setActiveAppId(newApp.id);
-        }
+        if (activeAppId) setApps(prev => prev.map(a => a.id === activeAppId ? newApp : a));
+        else { setApps(prev => [...prev, newApp]); setActiveAppId(newApp.id); }
         
-        setView('app'); // Switch view ONLY because an app was built
+        setView('app'); 
         setMessages(prev => [...prev, { role: 'model', text: responseData.message || "App updated." }]);
       } else if (responseData.message) {
-        // THE FIX: If no app was built, just output the chat message and stay in the chat view
         setMessages(prev => [...prev, { role: 'model', text: responseData.message }]);
       }
     } catch (e) {
@@ -278,41 +298,20 @@ export default function App() {
         {rateLimitTimer > 0 && <div className="bg-orange-50 text-orange-600 text-xs p-2 text-center flex items-center justify-center gap-2 animate-pulse"><AlertTriangle size={14}/> Cooling down: {rateLimitTimer}s</div>}
 
         <div className="p-3 border-t bg-white flex items-end gap-2">
-          
-          <button 
-            onClick={() => setView('app')} 
-            className="p-3 mb-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors flex-shrink-0"
-            title="Go to App Dashboard"
-          >
-            <Smartphone size={24} />
-          </button>
-
+          <button onClick={() => setView('app')} className="p-3 mb-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors flex-shrink-0"><Smartphone size={24} /></button>
           <div className="flex-1 bg-slate-100 rounded-2xl relative border border-transparent focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all overflow-hidden">
             <textarea 
               className="w-full bg-transparent px-4 py-3 focus:outline-none resize-none text-slate-700 placeholder-slate-400" 
               placeholder="Describe an app or ask a question..." 
-              value={input} 
-              onChange={(e) => setInput(e.target.value)} 
-              disabled={rateLimitTimer > 0}
+              value={input} onChange={(e) => setInput(e.target.value)} disabled={rateLimitTimer > 0}
               rows={isInputExpanded ? 6 : 1}
               style={{ minHeight: isInputExpanded ? '140px' : '48px', paddingRight: '40px' }}
             />
-            
-            <button 
-              onClick={() => setIsInputExpanded(!isInputExpanded)}
-              className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition-colors bg-white/50 rounded p-1"
-            >
+            <button onClick={() => setIsInputExpanded(!isInputExpanded)} className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition-colors bg-white/50 rounded p-1">
               {isInputExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
             </button>
           </div>
-
-          <button 
-            onClick={() => handleSend()} 
-            disabled={rateLimitTimer > 0 || !input.trim()} 
-            className="bg-blue-600 text-white p-3 mb-1 rounded-full shadow-lg disabled:bg-slate-300 disabled:shadow-none transition-all flex-shrink-0 active:scale-95"
-          >
-            <Send size={20}/>
-          </button>
+          <button onClick={() => handleSend()} disabled={rateLimitTimer > 0 || !input.trim()} className="bg-blue-600 text-white p-3 mb-1 rounded-full shadow-lg disabled:bg-slate-300 disabled:shadow-none transition-all flex-shrink-0 active:scale-95"><Send size={20}/></button>
         </div>
       </div>
 
@@ -325,17 +324,11 @@ export default function App() {
         
         <div className="flex-1 p-6 overflow-y-auto block relative pb-24">
           {loading && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-medium z-50 flex items-center gap-2 shadow-xl"><Loader2 size={14} className="animate-spin"/> Thinking...</div>}
-          
           {activeApp && <div className="w-full max-w-md mx-auto"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} onInputChange={handleInputChange} formState={formState} disabled={rateLimitTimer > 0} /></div>}
         </div>
 
         <div className="absolute bottom-6 left-6 z-30">
-          <button 
-            onClick={() => setView('chat')} 
-            className="bg-slate-900 text-white p-4 rounded-full shadow-2xl hover:scale-110 transition-transform active:scale-95 flex items-center gap-2"
-          >
-            <MessageSquare size={20} />
-          </button>
+          <button onClick={() => setView('chat')} className="bg-slate-900 text-white p-4 rounded-full shadow-2xl hover:scale-110 transition-transform active:scale-95 flex items-center gap-2"><MessageSquare size={20} /></button>
         </div>
       </div>
 
