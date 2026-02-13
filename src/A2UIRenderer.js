@@ -1,8 +1,9 @@
 import React from 'react';
 import * as Icons from 'lucide-react';
+import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 const COMPONENTS = {
-  Header: ({ label, icon, variant }) => {
+  Header: ({ label, icon }) => {
     const Icon = icon && Icons[icon] ? Icons[icon] : Icons.Sparkles;
     return (
       <div className="text-center py-6 animate-in fade-in zoom-in duration-500">
@@ -15,20 +16,90 @@ const COMPONENTS = {
   },
 
   Stat: ({ label, value, icon }) => {
-    if (!label && !value) return null;
+    if (value === undefined) return null;
     const Icon = icon && Icons[icon] ? Icons[icon] : null;
     return (
-      <div className="group relative overflow-hidden bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] mb-4">
+      <div className="group relative overflow-hidden bg-white p-6 rounded-3xl border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] mb-4 animate-in slide-in-from-bottom-2">
         <div className="flex justify-between items-start">
           <div className="flex flex-col text-left">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{label}</span>
-            <span className="text-4xl font-extrabold text-slate-900 tracking-tighter">{value}</span>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{label}</span>
+            <span className="text-5xl font-extrabold text-slate-900 tracking-tighter">{value}</span>
           </div>
           {Icon && <div className="text-slate-300"><Icon size={24} /></div>}
         </div>
       </div>
     );
   },
+
+  // THE NEW PRO CHART COMPONENT
+  Chart: ({ data }) => {
+    if (!data || !Array.isArray(data) || data.length < 2) return null; // Need 2 points to draw a line
+    
+    // Auto-detect which key is the number we want to plot
+    const plotKey = Object.keys(data[0]).find(k => typeof data[0][k] === 'number');
+    if (!plotKey) return null;
+
+    return (
+      <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] mb-4 h-56 animate-in fade-in zoom-in">
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Activity Trend</h3>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data}>
+            <defs>
+              <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
+                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="timestamp" hide />
+            <Tooltip 
+              contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.1)', fontWeight: 'bold' }} 
+              itemStyle={{ color: '#3b82f6' }}
+            />
+            <Area type="monotone" dataKey={plotKey} stroke="#3b82f6" strokeWidth={4} fillOpacity={1} fill="url(#colorGradient)" />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  },
+
+  // THE NEW PRO HISTORY LIST COMPONENT
+  DataList: ({ data }) => {
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      return <div className="p-6 bg-white rounded-3xl border border-slate-100 mb-4 text-center text-slate-400 text-sm">No history yet. Start tracking!</div>;
+    }
+    return (
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden mb-4 animate-in slide-in-from-bottom-3">
+        {/* We slice and reverse so the newest entry is always at the top */}
+        {data.slice().reverse().map((item, i) => {
+           const numKey = Object.keys(item).find(k => typeof item[k] === 'number');
+           const strKey = Object.keys(item).find(k => typeof item[k] === 'string' && k !== 'timestamp');
+           
+           return (
+             <div key={i} className="p-4 border-b border-slate-50 last:border-0 flex justify-between items-center hover:bg-slate-50 transition-colors">
+                <div className="flex flex-col">
+                  <span className="font-bold text-slate-700 capitalize">{item[strKey] || 'Entry'}</span>
+                  <span className="text-xs text-slate-400 font-medium">{item.timestamp}</span>
+                </div>
+                <span className="font-extrabold text-blue-600">{item[numKey] !== undefined ? item[numKey] : ''}</span>
+             </div>
+           );
+        })}
+      </div>
+    );
+  },
+
+  Input: ({ id, label, placeholder, value, onInputChange }) => (
+    <div className="mb-4 text-left animate-in slide-in-from-bottom-2">
+      {label && <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1">{label}</label>}
+      <input 
+        type="text" 
+        value={value || ''}
+        onChange={(e) => onInputChange(id, e.target.value)}
+        placeholder={placeholder || "Type here..."}
+        className="w-full p-4 bg-white rounded-2xl border-2 border-slate-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 focus:outline-none transition-all font-medium text-slate-700 shadow-sm"
+      />
+    </div>
+  ),
 
   Btn: ({ label, onClick, variant, icon }) => {
     const Icon = icon && Icons[icon] ? Icons[icon] : null;
@@ -39,28 +110,11 @@ const COMPONENTS = {
       outline: "bg-white text-slate-700 border-2 border-slate-100 hover:border-slate-200 hover:bg-slate-50",
       ghost: "bg-transparent text-slate-500 hover:bg-slate-100 shadow-none",
     };
-
     return (
       <button onClick={onClick} className={`${baseClass} ${variants[variant] || variants.outline}`}>
         {Icon && <Icon size={18} />}
         {label}
       </button>
-    );
-  },
-
-  // THE NEW PRO INPUT COMPONENT
-  Input: ({ id, label, placeholder, value, onInputChange }) => {
-    return (
-      <div className="mb-4 text-left animate-in slide-in-from-bottom-2">
-        {label && <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1">{label}</label>}
-        <input 
-          type="text" 
-          value={value || ''}
-          onChange={(e) => onInputChange(id, e.target.value)}
-          placeholder={placeholder || "Type here..."}
-          className="w-full p-4 bg-white rounded-2xl border-2 border-slate-100 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 focus:outline-none transition-all font-medium text-slate-700 shadow-sm"
-        />
-      </div>
     );
   },
 
@@ -83,7 +137,6 @@ const A2UIRenderer = ({ blueprint, onAction, onInputChange, formState }) => {
           <Component 
             key={index} 
             {...block} 
-            // Pass the temporary typed memory to the input
             value={block.t === 'Input' ? formState[block.id] : block.value} 
             onInputChange={onInputChange}
             onClick={block.onClick ? () => onAction(block.onClick) : undefined} 
