@@ -70,7 +70,7 @@ const COMPONENTS = {
     );
   },
 
-    DataList: ({ data, dataKey, onAction }) => {
+  DataList: ({ data, dataKey, onAction }) => {
     if (!data || !Array.isArray(data) || data.length === 0) {
       return <div className="p-6 text-center text-slate-400 text-sm bg-slate-50 rounded-2xl">No history yet. Start tracking!</div>;
     }
@@ -103,7 +103,7 @@ const COMPONENTS = {
                     
                     {/* THE NEW PRO BADGE */}
                     {badgeKey && item[badgeKey] && (
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold uppercase tracking-wider rounded-full">
+                      <span className="px-2 py-0.5 bg-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-wider rounded-md">
                         {item[badgeKey]}
                       </span>
                     )}
@@ -120,7 +120,7 @@ const COMPONENTS = {
         })}
       </div>
     );
-  },  
+  },
 
   Input: ({ id, label, placeholder, value, onInputChange }) => (
     <div className="mb-4 text-left">
