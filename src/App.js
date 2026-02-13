@@ -52,7 +52,7 @@ const RESPONSE_SCHEMA = {
   required: ["thought", "message"]
 };
 
-// THE UPDATED PROMPT: Notice the "SINGLE LEDGER RULE" at the bottom
+// THE DOMAIN-AGNOSTIC PROMPT
 const SYSTEM_PROMPT = `
 You are the Architect of a Polymorphic OS.
 
@@ -66,13 +66,13 @@ CRITICAL JSON RULES:
 AVAILABLE TOOLS (For the payload):
 - "update_data": { "key": "string", "operation": "add" | "set", "value": any }
 - "reset_data": { "key": "string", "value": any }
-- "append_to_list": { "key": "string", "item": { "amount": "$INPUT:amount_id", "category": "$INPUT:cat_id" } }
+- "append_to_list": { "key": "string", "item": { "value": "$INPUT:val_id", "name": "$INPUT:name_id", "category": "string" } }
 
 PRO TIP FOR COMPLEX TRACKERS (THE SINGLE LEDGER RULE):
-- NEVER create multiple separate arrays (e.g. do not make an 'expenses' array AND a 'subscriptions' array).
-- ALWAYS use ONE unified master array (e.g., "transactions") for everything.
-- Use a "type" or "category" field inside the item payload to distinguish them (e.g. type: "Subscription" vs type: "Expense").
-Our system will automatically arrange this single array into a beautiful Multi-Card Dashboard!
+- ALWAYS use ONE unified master array for all entries (e.g., "log" or "transactions"). Do NOT create multiple arrays.
+- CATEGORY TAGGING: If the app tracks different types of things (e.g., Expenses vs Subscriptions, Cardio vs Weights, Bugs vs Features), include a "category" or "type" field in the item payload.
+- Domain Agnostic Example Payload: "{\\"key\\": \\"log\\", \\"item\\": {\\"value\\": \\"$INPUT:val\\", \\"name\\": \\"$INPUT:name\\", \\"category\\": \\"Your_Category_Here\\"}}"
+Our UI engine will automatically turn that "category" field into a beautiful visual UI Badge!
 `;
 
 const safeParse = (input) => {
