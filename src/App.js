@@ -55,12 +55,16 @@ const RESPONSE_SCHEMA = {
       required: ["title", "type", "data", "view", "actions"] 
     }
   },
-  required: ["thought", "message", "app"]
+  // THE FIX: "app" is no longer required! The AI can choose to just send a message.
+  required: ["thought", "message"]
 };
 
 const SYSTEM_PROMPT = `
 You are the Architect of a Polymorphic OS.
-Map User Intent to the Universal App Schema.
+
+CONVERSATION VS. BUILDING (CRITICAL):
+- If the user is just chatting, asking a question, or brainstorming, DO NOT output the "app" object. Only return "thought" and "message".
+- If the user explicitly asks to build, create, or update a tool/app, OR if you suggest a tool and they agree, THEN output the full "app" schema.
 
 CRITICAL JSON STRING RULES:
 The "data" and "payload" fields MUST be valid stringified JSON. Use escaped double quotes.
@@ -73,12 +77,6 @@ DECLARATIVE INPUTS (How to ask the user to type something):
 If you need the user to type a value, do TWO things:
 1. Define a text box in the "inputs" array with a unique "id".
 2. In your action's payload "value", use the magic string "$INPUT:your_id".
-
-EXAMPLE OF CUSTOM INPUT:
-{
-  "inputs": [{ "id": "custom_cups", "label": "Custom Amount", "placeholder": "e.g. 5" }],
-  "actions": [{ "label": "Add", "variant": "primary", "tool": "update_data", "payload": "{\\"key\\": \\"cups\\", \\"operation\\": \\"add\\", \\"value\\": \\"$INPUT:custom_cups\\"}" }]
-}
 `;
 
 const safeParse = (input) => {
@@ -144,7 +142,6 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(!apiKey);
   const messagesEndRef = useRef(null);
   
-  // NEW: State for expanding the text area
   const [isInputExpanded, setIsInputExpanded] = useState(false);
 
   useEffect(() => { localStorage.setItem('neural_apps', JSON.stringify(apps)); }, [apps]);
@@ -203,7 +200,7 @@ export default function App() {
     const userText = input;
     setMessages(prev => [...prev, { role: 'user', text: userText }]);
     setInput('');
-    setIsInputExpanded(false); // Auto-shrink input after sending
+    setIsInputExpanded(false); 
     setLoading(true);
 
     try {
@@ -222,7 +219,8 @@ export default function App() {
       const result = await chat.sendMessage(userText);
       const responseData = JSON.parse(result.response.text());
 
-      if (responseData.app) {
+      // THE FIX: Check if the AI actually generated an app blueprint
+      if (responseData.app && Object.keys(responseData.app).length > 0) {
         const parsedApp = {
              ...responseData.app,
              data: safeParse(responseData.app.data),
@@ -244,8 +242,12 @@ export default function App() {
              setApps(prev => [...prev, newApp]);
              setActiveAppId(newApp.id);
         }
-        setView('app');
+        
+        setView('app'); // Switch view ONLY because an app was built
         setMessages(prev => [...prev, { role: 'model', text: responseData.message || "App updated." }]);
+      } else if (responseData.message) {
+        // THE FIX: If no app was built, just output the chat message and stay in the chat view
+        setMessages(prev => [...prev, { role: 'model', text: responseData.message }]);
       }
     } catch (e) {
       if (e.message.includes('429')) setRateLimitTimer(30);
@@ -275,10 +277,8 @@ export default function App() {
         
         {rateLimitTimer > 0 && <div className="bg-orange-50 text-orange-600 text-xs p-2 text-center flex items-center justify-center gap-2 animate-pulse"><AlertTriangle size={14}/> Cooling down: {rateLimitTimer}s</div>}
 
-        {/* REBUILT CHAT INPUT BAR */}
         <div className="p-3 border-t bg-white flex items-end gap-2">
           
-          {/* TOGGLE VIEW BUTTON MOVED HERE */}
           <button 
             onClick={() => setView('app')} 
             className="p-3 mb-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors flex-shrink-0"
@@ -287,11 +287,10 @@ export default function App() {
             <Smartphone size={24} />
           </button>
 
-          {/* MULTILINE TEXTAREA */}
           <div className="flex-1 bg-slate-100 rounded-2xl relative border border-transparent focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all overflow-hidden">
             <textarea 
               className="w-full bg-transparent px-4 py-3 focus:outline-none resize-none text-slate-700 placeholder-slate-400" 
-              placeholder="Describe an app..." 
+              placeholder="Describe an app or ask a question..." 
               value={input} 
               onChange={(e) => setInput(e.target.value)} 
               disabled={rateLimitTimer > 0}
@@ -299,7 +298,6 @@ export default function App() {
               style={{ minHeight: isInputExpanded ? '140px' : '48px', paddingRight: '40px' }}
             />
             
-            {/* EXPAND BUTTON */}
             <button 
               onClick={() => setIsInputExpanded(!isInputExpanded)}
               className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition-colors bg-white/50 rounded p-1"
@@ -325,14 +323,12 @@ export default function App() {
           <button onClick={() => setView('dock')} className="p-2 hover:bg-slate-100 rounded-full text-blue-600"><Grid size={24} /></button>
         </div>
         
-        {/* FIXED SCROLLING BUG HERE (removed justify-center, changed to block) */}
         <div className="flex-1 p-6 overflow-y-auto block relative pb-24">
           {loading && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-medium z-50 flex items-center gap-2 shadow-xl"><Loader2 size={14} className="animate-spin"/> Thinking...</div>}
           
           {activeApp && <div className="w-full max-w-md mx-auto"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} onInputChange={handleInputChange} formState={formState} disabled={rateLimitTimer > 0} /></div>}
         </div>
 
-        {/* RETURN TO CHAT BUTTON (Bottom Left of App View) */}
         <div className="absolute bottom-6 left-6 z-30">
           <button 
             onClick={() => setView('chat')} 
