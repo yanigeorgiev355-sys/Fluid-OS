@@ -52,6 +52,7 @@ const RESPONSE_SCHEMA = {
   required: ["thought", "message"]
 };
 
+// THE UPDATED PROMPT: Notice the "SINGLE LEDGER RULE" at the bottom
 const SYSTEM_PROMPT = `
 You are the Architect of a Polymorphic OS.
 
@@ -67,9 +68,11 @@ AVAILABLE TOOLS (For the payload):
 - "reset_data": { "key": "string", "value": any }
 - "append_to_list": { "key": "string", "item": { "amount": "$INPUT:amount_id", "category": "$INPUT:cat_id" } }
 
-PRO TIP FOR TRACKERS (FINANCE, DIET, HABITS):
-To build a useful tracker with charts and history, ALWAYS use the "append_to_list" tool to store an array of objects. 
-Our system will automatically arrange your arrays into a beautiful Multi-Card Dashboard!
+PRO TIP FOR COMPLEX TRACKERS (THE SINGLE LEDGER RULE):
+- NEVER create multiple separate arrays (e.g. do not make an 'expenses' array AND a 'subscriptions' array).
+- ALWAYS use ONE unified master array (e.g., "transactions") for everything.
+- Use a "type" or "category" field inside the item payload to distinguish them (e.g. type: "Subscription" vs type: "Expense").
+Our system will automatically arrange this single array into a beautiful Multi-Card Dashboard!
 `;
 
 const safeParse = (input) => {
@@ -79,12 +82,10 @@ const safeParse = (input) => {
   catch (e) { try { return JSON.parse(input.replace(/'/g, '"')); } catch (e2) { return {}; } }
 };
 
-// --- UPGRADED ADAPTER: NATIVE CONTAINERS ---
 const transformToBlocks = (appSchema) => {
   const { data = {}, view = {}, inputs = [], actions = [] } = appSchema;
   const blocks = [];
 
-  // Top Level Header
   blocks.push({ t: "Header", label: appSchema.title || "App", icon: view.icon || "Sparkles" });
 
   const listKey = Object.keys(data).find(k => Array.isArray(data[k]));
@@ -98,27 +99,23 @@ const transformToBlocks = (appSchema) => {
           else total = arr.length; 
       }
       
-      // FORM BUILDING (Inputs & Actions)
       const formChildren = [];
       if (inputs) inputs.forEach(input => formChildren.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder }));
       if (actions) actions.forEach(action => formChildren.push({ t: "Btn", label: action.label, variant: action.variant, icon: action.icon, onClick: JSON.stringify({ tool: action.tool, payload: action.payload }) }));
 
-      // THE MAGIC: We wrap the layout in a Grid and separate Cards!
       blocks.push({
         t: "Grid",
         columns: 2,
         children: [
-          // Left Column: The Form + The Total + The Chart
           {
             t: "Card",
             title: "Overview & Entry",
             children: [
                { t: "Stat", label: `Total ${listKey}`, value: total },
                ...formChildren,
-               { t: "Chart", data: arr } // Chart stays inside the left card
+               { t: "Chart", data: arr } 
             ]
           },
-          // Right Column: The Transaction History
           {
             t: "Card",
             title: "History Log",
@@ -130,7 +127,6 @@ const transformToBlocks = (appSchema) => {
       });
       
   } else {
-      // Simple App Fallback (Not an array)
       const keys = Object.keys(data);
       let mainKey = keys.find(k => k !== 'unit') || "count";
       blocks.push({ t: "Stat", label: mainKey, value: `${data[mainKey] || 0} ${data.unit || ''}`.trim() });
