@@ -131,22 +131,46 @@ export default function App() {
 
   const activeApp = apps.find(a => a.id === activeAppId);
 
-  // --- 3. THE NERVOUS SYSTEM (Handles Buttons, Inputs, Checks) ---
+    // --- 3. THE SELF-HEALING NERVOUS SYSTEM ---
   const handleAppAction = (actionType, payload) => {
     if (!activeApp) return;
 
     setApps(prevApps => prevApps.map(app => {
       if (app.id !== activeAppId) return app;
 
+      // Create a copy of the data
       let newData = { ...app.data };
 
-      // >>> ACCUMULATOR LOGIC
+      // HELPER: Auto-Healer for missing keys
+      // If the AI asks to modify 'x', but 'x' is missing, create it.
+      const ensureKey = (key, defaultValue) => {
+        if (newData[key] === undefined) {
+          console.warn(`[Self-Healing] Missing key '${key}' detected. Auto-creating with value:`, defaultValue);
+          newData[key] = defaultValue;
+        }
+        return key;
+      };
+
+      // --- UNIVERSAL HANDLERS (No specific app logic allowed) ---
+
+      // 1. GENERIC NUMERIC OPS (Handles Counters, Scores, Trackers)
       if (actionType === 'INCREMENT_COUNT') {
-        const key = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number');
-        if (key) newData[key] = (newData[key] || 0) + (payload.amount || 1);
+        // Try to find the target key, or fallback to ANY number key, or default to 'count'
+        let targetKey = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number') || 'count';
+        ensureKey(targetKey, 0); // Heal: If 'red_cars' missing, set to 0
+        
+        const amount = payload.amount || 1;
+        newData[targetKey] = Number(newData[targetKey]) + amount;
       }
 
-      // >>> REGULATOR LOGIC
+      // 2. GENERIC BOOLEAN OPS (Handles Toggles, Switches)
+      if (actionType === 'TOGGLE_STATE') {
+         let targetKey = payload.key || 'is_active';
+         ensureKey(targetKey, false); // Heal: If missing, set to false
+         newData[targetKey] = !newData[targetKey];
+      }
+
+    // 3. GENERIC TIMER OPS (Handles any timer)
       if (actionType === 'START_TIMER') {
         newData.is_running = true;
         newData.finished = false;
@@ -157,31 +181,51 @@ export default function App() {
       if (actionType === 'RESET_TIMER') {
         newData.is_running = false;
         newData.finished = false;
-        const key = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number');
-        if (key) newData[key] = payload.initialValue || 0;
+        // Find the time key and reset it
+        const timeKey = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number');
+        if (timeKey) newData[timeKey] = payload.initialValue || 0;
       }
 
-      // >>> CHECKLIST LOGIC
-      if (actionType === 'ADD_CHECKLIST_ITEM') {
-        const key = payload.key;
-        const currentList = Array.isArray(newData[key]) ? newData[key] : [];
-        newData[key] = [...currentList, { label: payload.value, checked: false }];
+      // 4. GENERIC LIST OPS (Handles Checklists, Packing, Todos)
+      if (actionType === 'ADD_CHECKLIST_ITEM' || actionType === 'ADD_ITEM') {
+        const listKey = payload.key || 'items';
+        ensureKey(listKey, []); // Heal: If missing, create empty array
+        
+        // Robustness: Ensure it is actually an array
+        if (!Array.isArray(newData[listKey])) newData[listKey] = [];
+        
+        newData[listKey] = [...newData[listKey], { 
+            label: payload.value || "New Item", 
+            checked: false, 
+            id: Date.now() 
+        }];
       }
+
       if (actionType === 'TOGGLE_CHECKLIST_ITEM') {
-        const key = payload.key;
-        if (Array.isArray(newData[key]) && newData[key][payload.index]) {
-          const updatedList = [...newData[key]];
-          updatedList[payload.index].checked = !updatedList[payload.index].checked;
-          newData[key] = updatedList;
+        const listKey = payload.key || 'items';
+        if (Array.isArray(newData[listKey]) && newData[listKey][payload.index]) {
+            const list = [...newData[listKey]];
+            list[payload.index].checked = !list[payload.index].checked;
+            newData[listKey] = list;
         }
       }
+
       if (actionType === 'DELETE_CHECKLIST_ITEM') {
-        const key = payload.key;
-        if (Array.isArray(newData[key])) {
-          const updatedList = [...newData[key]];
-          updatedList.splice(payload.index, 1);
-          newData[key] = updatedList;
+        const listKey = payload.key || 'items';
+        if (Array.isArray(newData[listKey])) {
+            const list = [...newData[listKey]];
+            list.splice(payload.index, 1);
+            newData[listKey] = list;
         }
+      }
+
+      if (actionType === 'EDIT_CHECKLIST_ITEM') {
+         const listKey = payload.key || 'items';
+         if (Array.isArray(newData[listKey]) && newData[listKey][payload.index]) {
+             const list = [...newData[listKey]];
+             list[payload.index].label = payload.value;
+             newData[listKey] = list;
+         }
       }
 
       return { ...app, data: newData };
