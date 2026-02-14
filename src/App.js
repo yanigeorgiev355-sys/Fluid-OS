@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, Send, AlertTriangle, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
+// IMPORT THE SINGLE GENERAL BRAIN
+import { SYSTEM_PROMPT } from './ai/systemPrompt'; 
 
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
@@ -30,7 +32,13 @@ const RESPONSE_SCHEMA = {
           type: SchemaType.ARRAY,
           items: {
             type: SchemaType.OBJECT,
-            properties: { id: { type: SchemaType.STRING }, label: { type: SchemaType.STRING }, placeholder: { type: SchemaType.STRING } }
+            properties: { 
+              id: { type: SchemaType.STRING }, 
+              label: { type: SchemaType.STRING }, 
+              type: { type: SchemaType.STRING, enum: ["text", "number", "select"] }, 
+              options: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } }, 
+              placeholder: { type: SchemaType.STRING } 
+            }
           }
         },
         actions: {
@@ -51,29 +59,6 @@ const RESPONSE_SCHEMA = {
   },
   required: ["thought", "message"]
 };
-
-// THE DOMAIN-AGNOSTIC PROMPT
-const SYSTEM_PROMPT = `
-You are the Architect of a Polymorphic OS.
-
-CONVERSATION VS BUILDING:
-- If just chatting/brainstorming, DO NOT output the "app" object. Just talk.
-- If the user asks for an app/tool, output the full "app" schema.
-
-CRITICAL JSON RULES:
-"data" and "payload" MUST be stringified JSON using escaped double quotes.
-
-AVAILABLE TOOLS (For the payload):
-- "update_data": { "key": "string", "operation": "add" | "set", "value": any }
-- "reset_data": { "key": "string", "value": any }
-- "append_to_list": { "key": "string", "item": { "value": "$INPUT:val_id", "name": "$INPUT:name_id", "category": "string" } }
-
-PRO TIP FOR COMPLEX TRACKERS (THE SINGLE LEDGER RULE):
-- ALWAYS use ONE unified master array for all entries (e.g., "log" or "transactions"). Do NOT create multiple arrays.
-- CATEGORY TAGGING: If the app tracks different types of things (e.g., Expenses vs Subscriptions, Cardio vs Weights, Bugs vs Features), include a "category" or "type" field in the item payload.
-- Domain Agnostic Example Payload: "{\\"key\\": \\"log\\", \\"item\\": {\\"value\\": \\"$INPUT:val\\", \\"name\\": \\"$INPUT:name\\", \\"category\\": \\"Your_Category_Here\\"}}"
-Our UI engine will automatically turn that "category" field into a beautiful visual UI Badge!
-`;
 
 const safeParse = (input) => {
   if (!input) return {};
@@ -100,7 +85,14 @@ const transformToBlocks = (appSchema) => {
       }
       
       const formChildren = [];
-      if (inputs) inputs.forEach(input => formChildren.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder }));
+      if (inputs) inputs.forEach(input => {
+        if (input.type === 'select') {
+           formChildren.push({ t: "Select", id: input.id, label: input.label, options: input.options });
+        } else {
+           formChildren.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder });
+        }
+      });
+
       if (actions) actions.forEach(action => formChildren.push({ t: "Btn", label: action.label, variant: action.variant, icon: action.icon, onClick: JSON.stringify({ tool: action.tool, payload: action.payload }) }));
 
       blocks.push({
@@ -109,7 +101,7 @@ const transformToBlocks = (appSchema) => {
         children: [
           {
             t: "Card",
-            title: "Overview & Entry",
+            title: "Entry",
             children: [
                { t: "Stat", label: `Total ${listKey}`, value: total },
                ...formChildren,
@@ -240,7 +232,10 @@ export default function App() {
     if (!input.trim() || !apiKey || rateLimitTimer > 0) return;
     
     const userText = input;
-    setMessages(prev => [...prev, { role: 'user', text: userText }]);
+    // CRITICAL: We pass the history to the AI, but we rely on the prompt to guide the logic.
+    // We do NOT use a router. We use one smart prompt.
+    const newHistory = [...messages, { role: 'user', text: userText }];
+    setMessages(newHistory);
     setInput('');
     setIsInputExpanded(false); 
     setLoading(true);
@@ -257,7 +252,10 @@ export default function App() {
         dynamicPrompt += `\n[CURRENT APP CONTEXT]:\nTitle: ${activeApp.title}\nData: ${JSON.stringify(activeApp.universalSchema.data)}`;
       }
 
-      const chat = model.startChat({ history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] });
+      const chat = model.startChat({ 
+        history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] 
+      });
+      
       const result = await chat.sendMessage(userText);
       const responseData = JSON.parse(result.response.text());
 
