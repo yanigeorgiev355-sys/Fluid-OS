@@ -10,13 +10,15 @@ import { SYSTEM_PROMPT } from './ai/systemPrompt';
 // CONFIGURATION
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- 1. THE NEW SCHEMA (Matches your Phase 1 Prompt) ---
+// --- 1. THE NEW SCHEMA (Fixed for API Strictness) ---
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
     tool_name: { type: SchemaType.STRING },
     archetype: { type: SchemaType.STRING, enum: ["Accumulator", "Regulator", "Checklist", "Drafter"] },
-    initial_state: { type: SchemaType.OBJECT }, 
+    // FIX: Removed "type: OBJECT" strict definition to allow flexible JSON
+    // The API will treat undefined complex types as general objects
+    initial_state: { type: SchemaType.OBJECT, properties: {} }, 
     blueprint: {
       type: SchemaType.ARRAY,
       items: {
@@ -28,7 +30,8 @@ const RESPONSE_SCHEMA = {
           action: { type: SchemaType.STRING },
           items_key: { type: SchemaType.STRING },
           state_key: { type: SchemaType.STRING },
-          payload: { type: SchemaType.OBJECT }
+          // FIX: Added empty properties to satisfy the "non-empty" requirement
+          payload: { type: SchemaType.OBJECT, properties: {} } 
         }
       }
     },
