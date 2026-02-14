@@ -1,134 +1,48 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Activity, Smartphone, MessageSquare, Grid, Plus, Trash2, X, Send, AlertTriangle, Loader2, Maximize2, Minimize2 } from 'lucide-react';
+import { 
+  Settings, Activity, Smartphone, MessageSquare, Grid, Plus, 
+  Trash2, X, Send, AlertTriangle, Loader2, Maximize2, Minimize2 
+} from 'lucide-react';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import A2UIRenderer from './A2UIRenderer';
-// IMPORT THE SINGLE GENERAL BRAIN
 import { SYSTEM_PROMPT } from './ai/systemPrompt'; 
 
+// CONFIGURATION
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
+// --- 1. THE NEW SCHEMA (Matches your Phase 1 Prompt) ---
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
-    thought: { type: SchemaType.STRING },
-    message: { type: SchemaType.STRING }, 
-    app: {
-      type: SchemaType.OBJECT,
-      properties: {
-        title: { type: SchemaType.STRING },
-        type: { type: SchemaType.STRING, enum: ["tracker", "list", "dashboard", "note"] },
-        data: { type: SchemaType.STRING }, 
-        view: {
-          type: SchemaType.OBJECT,
-          properties: {
-            layout: { type: SchemaType.STRING, enum: ["hero_center", "list_vertical", "grid_2col", "dashboard"] },
-            theme: { type: SchemaType.STRING, enum: ["ocean", "sunset", "monochrome", "danger"] },
-            icon: { type: SchemaType.STRING },
-            message: { type: SchemaType.STRING }
-          },
-          required: ["layout", "theme"] 
-        },
-        inputs: {
-          type: SchemaType.ARRAY,
-          items: {
-            type: SchemaType.OBJECT,
-            properties: { 
-              id: { type: SchemaType.STRING }, 
-              label: { type: SchemaType.STRING }, 
-              type: { type: SchemaType.STRING, enum: ["text", "number", "select"] }, 
-              options: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } }, 
-              placeholder: { type: SchemaType.STRING } 
-            }
-          }
-        },
-        actions: {
-          type: SchemaType.ARRAY,
-          items: {
-            type: SchemaType.OBJECT,
-            properties: {
-              label: { type: SchemaType.STRING }, icon: { type: SchemaType.STRING },
-              variant: { type: SchemaType.STRING, enum: ["primary", "secondary", "ghost", "danger", "gradient"] },
-              tool: { type: SchemaType.STRING }, payload: { type: SchemaType.STRING } 
-            },
-            required: ["label", "tool", "payload", "variant"] 
-          }
+    tool_name: { type: SchemaType.STRING },
+    archetype: { type: SchemaType.STRING, enum: ["Accumulator", "Regulator", "Checklist", "Drafter"] },
+    initial_state: { type: SchemaType.OBJECT }, 
+    blueprint: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          type: { type: SchemaType.STRING },
+          label: { type: SchemaType.STRING },
+          value_key: { type: SchemaType.STRING },
+          action: { type: SchemaType.STRING },
+          items_key: { type: SchemaType.STRING },
+          state_key: { type: SchemaType.STRING },
+          payload: { type: SchemaType.OBJECT }
         }
-      },
-      required: ["title", "type", "data", "view", "actions"] 
-    }
+      }
+    },
+    message: { type: SchemaType.STRING }
   },
-  required: ["thought", "message"]
+  required: ["tool_name", "archetype", "blueprint", "initial_state"]
 };
 
+// HELPER: Safely parse JSON even if it's messy
 const safeParse = (input) => {
   if (!input) return {};
   if (typeof input === 'object') return input; 
   try { return JSON.parse(input); } 
-  catch (e) { try { return JSON.parse(input.replace(/'/g, '"')); } catch (e2) { return {}; } }
-};
-
-const transformToBlocks = (appSchema) => {
-  const { data = {}, view = {}, inputs = [], actions = [] } = appSchema;
-  const blocks = [];
-
-  blocks.push({ t: "Header", label: appSchema.title || "App", icon: view.icon || "Sparkles" });
-
-  const listKey = Object.keys(data).find(k => Array.isArray(data[k]));
-  
-  if (listKey) {
-      const arr = data[listKey];
-      let total = 0;
-      if (arr.length > 0) {
-          const numKey = Object.keys(arr[0]).find(k => typeof arr[0][k] === 'number');
-          if (numKey) total = arr.reduce((sum, item) => sum + (item[numKey] || 0), 0);
-          else total = arr.length; 
-      }
-      
-      const formChildren = [];
-      if (inputs) inputs.forEach(input => {
-        if (input.type === 'select') {
-           formChildren.push({ t: "Select", id: input.id, label: input.label, options: input.options });
-        } else {
-           formChildren.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder });
-        }
-      });
-
-      if (actions) actions.forEach(action => formChildren.push({ t: "Btn", label: action.label, variant: action.variant, icon: action.icon, onClick: JSON.stringify({ tool: action.tool, payload: action.payload }) }));
-
-      blocks.push({
-        t: "Grid",
-        columns: 2,
-        children: [
-          {
-            t: "Card",
-            title: "Entry",
-            children: [
-               { t: "Stat", label: `Total ${listKey}`, value: total },
-               ...formChildren,
-               { t: "Chart", data: arr } 
-            ]
-          },
-          {
-            t: "Card",
-            title: "History Log",
-            children: [
-               { t: "DataList", data: arr, dataKey: listKey }
-            ]
-          }
-        ]
-      });
-      
-  } else {
-      const keys = Object.keys(data);
-      let mainKey = keys.find(k => k !== 'unit') || "count";
-      blocks.push({ t: "Stat", label: mainKey, value: `${data[mainKey] || 0} ${data.unit || ''}`.trim() });
-      if (inputs) inputs.forEach(input => blocks.push({ t: "Input", id: input.id, label: input.label, placeholder: input.placeholder }));
-      if (actions) actions.forEach(action => blocks.push({ t: "Btn", label: action.label, variant: action.variant, icon: action.icon, onClick: JSON.stringify({ tool: action.tool, payload: action.payload }) }));
-  }
-
-  if (view.message) blocks.push({ t: "Text", label: view.message, variant: "caption" });
-
-  return { blocks };
+  catch (e) { return {}; }
 };
 
 export default function App() {
@@ -136,7 +50,6 @@ export default function App() {
   const [apps, setApps] = useState(() => JSON.parse(localStorage.getItem('neural_apps') || '[]'));
   const [messages, setMessages] = useState([{ role: 'model', text: "Ready. What shall we build?" }]);
   const [input, setInput] = useState('');
-  const [formState, setFormState] = useState({});
   const [activeAppId, setActiveAppId] = useState(null); 
   const [view, setView] = useState('chat'); 
   const [loading, setLoading] = useState(false);
@@ -145,95 +58,117 @@ export default function App() {
   const messagesEndRef = useRef(null);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
 
+  // Persistence
   useEffect(() => { localStorage.setItem('neural_apps', JSON.stringify(apps)); }, [apps]);
+  
+  // Scroll to bottom of chat
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
-  useEffect(() => { if (rateLimitTimer > 0) { const t = setInterval(() => setRateLimitTimer(c => c - 1), 1000); return () => clearInterval(t); } }, [rateLimitTimer]);
+  
+  // Rate Limit Countdown
+  useEffect(() => { 
+    if (rateLimitTimer > 0) { 
+      const t = setInterval(() => setRateLimitTimer(c => c - 1), 1000); 
+      return () => clearInterval(t); 
+    } 
+  }, [rateLimitTimer]);
+
+  // --- 2. THE TIMER HEARTBEAT (Makes "Regulator" Apps Tick) ---
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setApps(prevApps => prevApps.map(app => {
+        // Only tick if it's a Regulator (Timer) and is actively running
+        if (app.archetype === 'Regulator' && app.data.is_running) {
+          // Find the first key that holds a number (e.g., 'time_remaining')
+          const timeKey = Object.keys(app.data).find(k => typeof app.data[k] === 'number');
+          
+          if (timeKey) {
+            if (app.data[timeKey] > 0) {
+              return { 
+                ...app, 
+                data: { ...app.data, [timeKey]: app.data[timeKey] - 1 } 
+              };
+            } else {
+              // Timer finished
+              return { 
+                ...app, 
+                data: { ...app.data, is_running: false, finished: true } 
+              };
+            }
+          }
+        }
+        return app;
+      }));
+    }, 1000); 
+
+    return () => clearInterval(interval);
+  }, []);
 
   const activeApp = apps.find(a => a.id === activeAppId);
 
-  const handleInputChange = (id, value) => {
-    setFormState(prev => ({ ...prev, [id]: value }));
-  };
+  // --- 3. THE NERVOUS SYSTEM (Handles Buttons, Inputs, Checks) ---
+  const handleAppAction = (actionType, payload) => {
+    if (!activeApp) return;
 
-  const executeTool = (toolName, payload, currentData) => {
-    let newData = { ...currentData };
-    if (!payload) return newData;
+    setApps(prevApps => prevApps.map(app => {
+      if (app.id !== activeAppId) return app;
 
-    if (toolName === "delete_from_list") {
-      const { key, index } = payload;
-      if (Array.isArray(newData[key])) { newData[key] = newData[key].filter((_, i) => i !== index); }
-      return newData;
-    }
+      // Create a copy of the app's data state
+      let newData = { ...app.data };
 
-    if (toolName === "edit_in_list") {
-      const { key, index, field } = payload;
-      if (Array.isArray(newData[key]) && newData[key][index]) {
-          const currentValue = newData[key][index][field];
-          const userInput = window.prompt(`Edit value for this entry:`, currentValue);
-          if (userInput !== null && userInput.trim() !== "") {
-              newData[key][index][field] = isNaN(Number(userInput)) ? userInput : Number(userInput);
-          }
+      // >>> ACCUMULATOR LOGIC (e.g., Red Car Counter)
+      if (actionType === 'INCREMENT_COUNT') {
+        const key = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number');
+        if (key) newData[key] = (newData[key] || 0) + (payload.amount || 1);
       }
-      return newData;
-    }
 
-    if (toolName === "append_to_list") {
-      const { key, item } = payload;
-      let newItem = { ...item };
+      // >>> REGULATOR LOGIC (e.g., Laundry Timer)
+      if (actionType === 'START_TIMER') {
+        newData.is_running = true;
+        newData.finished = false;
+      }
+      if (actionType === 'STOP_TIMER') {
+        newData.is_running = false;
+      }
+      if (actionType === 'RESET_TIMER') {
+        newData.is_running = false;
+        newData.finished = false;
+        // Reset to initial value if provided, or find the numeric key and set to 0
+        const key = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number');
+        if (key) newData[key] = payload.initialValue || 0;
+      }
 
-      for (let k in newItem) {
-        if (typeof newItem[k] === 'string' && newItem[k].startsWith("$INPUT:")) {
-          const inputId = newItem[k].replace("$INPUT:", "");
-          const typedValue = formState[inputId];
-          if (typedValue === undefined || typedValue.trim() === "") return currentData; 
-          newItem[k] = isNaN(Number(typedValue)) ? typedValue : Number(typedValue);
+      // >>> CHECKLIST LOGIC (e.g., Beach Packing)
+      if (actionType === 'ADD_CHECKLIST_ITEM') {
+        const key = payload.key;
+        const currentList = Array.isArray(newData[key]) ? newData[key] : [];
+        // Add new item to the array
+        newData[key] = [...currentList, { label: payload.value, checked: false }];
+      }
+      if (actionType === 'TOGGLE_CHECKLIST_ITEM') {
+        const key = payload.key;
+        if (Array.isArray(newData[key]) && newData[key][payload.index]) {
+          const updatedList = [...newData[key]];
+          updatedList[payload.index].checked = !updatedList[payload.index].checked;
+          newData[key] = updatedList;
         }
       }
-      newItem.timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      newData[key] = Array.isArray(newData[key]) ? [...newData[key], newItem] : [newItem];
-      return newData;
-    }
+      if (actionType === 'DELETE_CHECKLIST_ITEM') {
+        const key = payload.key;
+        if (Array.isArray(newData[key])) {
+          const updatedList = [...newData[key]];
+          updatedList.splice(payload.index, 1);
+          newData[key] = updatedList;
+        }
+      }
 
-    let finalValue = payload.value;
-    if (typeof finalValue === 'string' && finalValue.startsWith("$INPUT:")) {
-        const inputId = finalValue.replace("$INPUT:", "");
-        const typedValue = formState[inputId];
-        if (typedValue === undefined || typedValue.trim() === "") return currentData; 
-        finalValue = isNaN(Number(typedValue)) ? typedValue : Number(typedValue);
-    }
-    if (toolName === "update_data") {
-      const { key, operation } = payload;
-      if (operation === "add") newData[key] = (Number(newData[key]) || 0) + Number(finalValue);
-      else if (operation === "set") newData[key] = finalValue;
-    }
-    if (toolName === "reset_data") {
-        newData[payload.key] = finalValue !== undefined ? finalValue : payload.value;
-    }
-    return newData;
-  };
-
-  const handleAppAction = async (actionJsonString) => {
-    if (!activeApp) return;
-    let action = safeParse(actionJsonString);
-    if (!action.tool) return;
-
-    const newData = executeTool(action.tool, action.payload, activeApp.universalSchema.data);
-    const updatedApp = {
-      ...activeApp,
-      universalSchema: { ...activeApp.universalSchema, data: newData },
-      blueprint: transformToBlocks({ ...activeApp.universalSchema, data: newData })
-    };
-
-    setApps(prev => prev.map(a => a.id === activeAppId ? updatedApp : a));
-    setFormState({}); 
+      return { ...app, data: newData };
+    }));
   };
 
   const handleSend = async () => {
     if (!input.trim() || !apiKey || rateLimitTimer > 0) return;
     
     const userText = input;
-    // CRITICAL: We pass the history to the AI, but we rely on the prompt to guide the logic.
-    // We do NOT use a router. We use one smart prompt.
     const newHistory = [...messages, { role: 'user', text: userText }];
     setMessages(newHistory);
     setInput('');
@@ -244,48 +179,43 @@ export default function App() {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ 
         model: GEMINI_MODEL_VERSION,
-        generationConfig: { responseMimeType: "application/json", responseSchema: RESPONSE_SCHEMA } 
+        generationConfig: { 
+          responseMimeType: "application/json", 
+          responseSchema: RESPONSE_SCHEMA 
+        } 
       });
 
-      let dynamicPrompt = SYSTEM_PROMPT;
-      if (activeApp) {
-        dynamicPrompt += `\n[CURRENT APP CONTEXT]:\nTitle: ${activeApp.title}\nData: ${JSON.stringify(activeApp.universalSchema.data)}`;
-      }
-
       const chat = model.startChat({ 
-        history: [{ role: "user", parts: [{ text: dynamicPrompt }] }] 
+        history: [{ role: "user", parts: [{ text: SYSTEM_PROMPT }] }] 
       });
       
       const result = await chat.sendMessage(userText);
-      const responseData = JSON.parse(result.response.text());
+      const responseText = result.response.text();
+      console.log("Raw Response:", responseText); // For debugging
+      const responseData = JSON.parse(responseText);
 
-      if (responseData.app && Object.keys(responseData.app).length > 0) {
-        const parsedApp = {
-             ...responseData.app,
-             data: safeParse(responseData.app.data),
-             actions: (responseData.app.actions || []).map(a => ({ ...a, payload: safeParse(a.payload) }))
-        };
-
-        const uiBlueprint = transformToBlocks(parsedApp);
-
+      // --- 4. APP GENERATION LOGIC ---
+      if (responseData.tool_name && responseData.blueprint) {
         const newApp = { 
           id: activeAppId || Date.now(), 
-          title: parsedApp.title || "New App", 
-          universalSchema: parsedApp, 
-          blueprint: uiBlueprint      
+          title: responseData.tool_name,
+          archetype: responseData.archetype,
+          blueprint: responseData.blueprint, 
+          data: responseData.initial_state || {} 
         };
 
         if (activeAppId) setApps(prev => prev.map(a => a.id === activeAppId ? newApp : a));
         else { setApps(prev => [...prev, newApp]); setActiveAppId(newApp.id); }
         
         setView('app'); 
-        setMessages(prev => [...prev, { role: 'model', text: responseData.message || "App updated." }]);
+        setMessages(prev => [...prev, { role: 'model', text: responseData.message || `Created ${responseData.tool_name}.` }]);
       } else if (responseData.message) {
         setMessages(prev => [...prev, { role: 'model', text: responseData.message }]);
       }
     } catch (e) {
       if (e.message.includes('429')) setRateLimitTimer(30);
       setMessages(prev => [...prev, { role: 'system', text: "Error: " + e.message }]);
+      console.error(e);
     }
     setLoading(false);
   };
@@ -299,7 +229,7 @@ export default function App() {
       {/* VIEW 1: CHAT */}
       <div className={`absolute inset-0 flex flex-col bg-white transition-transform duration-300 ${view === 'chat' ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-4 border-b flex justify-between bg-white z-10 shadow-sm">
-          <span className="font-bold text-slate-800 flex items-center gap-2"><Activity size={20} className="text-blue-600"/> Neural Architect</span>
+          <span className="font-bold text-slate-800 flex items-center gap-2"><Activity size={20} className="text-blue-600"/> Neural OS</span>
           <button onClick={() => setSettingsOpen(true)}><Settings size={20} className="text-slate-400"/></button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -316,7 +246,7 @@ export default function App() {
           <div className="flex-1 bg-slate-100 rounded-2xl relative border border-transparent focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all overflow-hidden">
             <textarea 
               className="w-full bg-transparent px-4 py-3 focus:outline-none resize-none text-slate-700 placeholder-slate-400" 
-              placeholder="Describe an app or ask a question..." 
+              placeholder="Ask for a tool (e.g., 'Timer for laundry')..." 
               value={input} onChange={(e) => setInput(e.target.value)} disabled={rateLimitTimer > 0}
               rows={isInputExpanded ? 6 : 1}
               style={{ minHeight: isInputExpanded ? '140px' : '48px', paddingRight: '40px' }}
@@ -338,7 +268,17 @@ export default function App() {
         
         <div className="flex-1 p-6 overflow-y-auto block relative pb-24">
           {loading && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-medium z-50 flex items-center gap-2 shadow-xl"><Loader2 size={14} className="animate-spin"/> Thinking...</div>}
-          {activeApp && <div className="w-full mx-auto"><A2UIRenderer blueprint={activeApp.blueprint} onAction={handleAppAction} onInputChange={handleInputChange} formState={formState} disabled={rateLimitTimer > 0} /></div>}
+          
+          {/* --- RENDER THE APP BLUEPRINT --- */}
+          {activeApp && (
+            <div className="w-full mx-auto">
+              <A2UIRenderer 
+                blueprint={activeApp.blueprint} 
+                data={activeApp.data} 
+                onAction={handleAppAction} 
+              />
+            </div>
+          )}
         </div>
 
         <div className="absolute bottom-6 left-6 z-30">
@@ -349,13 +289,14 @@ export default function App() {
       {/* VIEW 3: DOCK */}
       <div className={`absolute inset-0 bg-slate-800/90 backdrop-blur-md z-40 transition-opacity duration-300 ${view === 'dock' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
         <div className="p-6 h-full flex flex-col">
-          <div className="flex justify-between items-center text-white mb-8"><h2 className="text-2xl font-bold">Apps</h2><button onClick={() => setView(activeApp ? 'app' : 'chat')}><X size={28}/></button></div>
+          <div className="flex justify-between items-center text-white mb-8"><h2 className="text-2xl font-bold">Tools</h2><button onClick={() => setView(activeApp ? 'app' : 'chat')}><X size={28}/></button></div>
           <div className="grid grid-cols-2 gap-4 overflow-y-auto pb-20">
-            <button onClick={() => { setActiveAppId(null); setView('chat'); }} className="bg-white/10 hover:bg-white/20 border-2 border-dashed border-white/30 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 text-white transition"><div className="bg-blue-600 p-3 rounded-full"><Plus size={24}/></div><span className="font-medium">New App</span></button>
+            <button onClick={() => { setActiveAppId(null); setView('chat'); }} className="bg-white/10 hover:bg-white/20 border-2 border-dashed border-white/30 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 text-white transition"><div className="bg-blue-600 p-3 rounded-full"><Plus size={24}/></div><span className="font-medium">New Tool</span></button>
             {apps.map(app => (
               <div key={app.id} onClick={() => { setActiveAppId(app.id); setView('app'); }} className="bg-white p-6 rounded-2xl shadow-lg relative cursor-pointer hover:scale-105 transition-transform group">
-                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl mb-3 shadow-md"></div>
+                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl mb-3 shadow-md flex items-center justify-center text-white font-bold text-xl">{app.title[0]}</div>
                 <h3 className="font-bold text-slate-800 truncate">{app.title}</h3>
+                <p className="text-xs text-slate-400 mt-1 uppercase tracking-wide">{app.archetype}</p>
                 <button onClick={(e) => deleteApp(app.id, e)} className="absolute top-3 right-3 text-slate-300 hover:text-red-500"><Trash2 size={18}/></button>
               </div>
             ))}
