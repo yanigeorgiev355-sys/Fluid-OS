@@ -10,15 +10,37 @@ import { SYSTEM_PROMPT } from './ai/systemPrompt';
 // CONFIGURATION
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- 1. THE NEW SCHEMA (Fixed for API Strictness) ---
+// --- 1. THE FIXED SCHEMA (Satisfies "Non-Empty" Requirement) ---
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
     tool_name: { type: SchemaType.STRING },
     archetype: { type: SchemaType.STRING, enum: ["Accumulator", "Regulator", "Checklist", "Drafter"] },
-    // FIX: Removed "type: OBJECT" strict definition to allow flexible JSON
-    // The API will treat undefined complex types as general objects
-    initial_state: { type: SchemaType.OBJECT, properties: {} }, 
+    
+    // FIX: We must define the properties we expect. We make them nullable so they are optional.
+    initial_state: { 
+      type: SchemaType.OBJECT, 
+      properties: {
+        count: { type: SchemaType.NUMBER, nullable: true },
+        is_running: { type: SchemaType.BOOLEAN, nullable: true },
+        finished: { type: SchemaType.BOOLEAN, nullable: true },
+        time_remaining: { type: SchemaType.NUMBER, nullable: true },
+        // For lists, we define a structured array
+        items: { 
+            type: SchemaType.ARRAY, 
+            nullable: true,
+            items: {
+                type: SchemaType.OBJECT,
+                properties: {
+                    label: { type: SchemaType.STRING },
+                    checked: { type: SchemaType.BOOLEAN }
+                }
+            } 
+        }
+      },
+      nullable: true
+    }, 
+
     blueprint: {
       type: SchemaType.ARRAY,
       items: {
@@ -30,22 +52,25 @@ const RESPONSE_SCHEMA = {
           action: { type: SchemaType.STRING },
           items_key: { type: SchemaType.STRING },
           state_key: { type: SchemaType.STRING },
-          // FIX: Added empty properties to satisfy the "non-empty" requirement
-          payload: { type: SchemaType.OBJECT, properties: {} } 
+          
+          // FIX: Define common payload keys explicitly
+          payload: { 
+            type: SchemaType.OBJECT, 
+            properties: {
+                key: { type: SchemaType.STRING, nullable: true },
+                amount: { type: SchemaType.NUMBER, nullable: true },
+                value: { type: SchemaType.STRING, nullable: true },
+                index: { type: SchemaType.NUMBER, nullable: true },
+                initialValue: { type: SchemaType.NUMBER, nullable: true }
+            },
+            nullable: true 
+          } 
         }
       }
     },
     message: { type: SchemaType.STRING }
   },
   required: ["tool_name", "archetype", "blueprint", "initial_state"]
-};
-
-// HELPER: Safely parse JSON even if it's messy
-const safeParse = (input) => {
-  if (!input) return {};
-  if (typeof input === 'object') return input; 
-  try { return JSON.parse(input); } 
-  catch (e) { return {}; }
 };
 
 export default function App() {
@@ -64,7 +89,7 @@ export default function App() {
   // Persistence
   useEffect(() => { localStorage.setItem('neural_apps', JSON.stringify(apps)); }, [apps]);
   
-  // Scroll to bottom of chat
+  // Scroll to bottom
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
   
   // Rate Limit Countdown
@@ -79,9 +104,7 @@ export default function App() {
   useEffect(() => {
     const interval = setInterval(() => {
       setApps(prevApps => prevApps.map(app => {
-        // Only tick if it's a Regulator (Timer) and is actively running
         if (app.archetype === 'Regulator' && app.data.is_running) {
-          // Find the first key that holds a number (e.g., 'time_remaining')
           const timeKey = Object.keys(app.data).find(k => typeof app.data[k] === 'number');
           
           if (timeKey) {
@@ -115,16 +138,15 @@ export default function App() {
     setApps(prevApps => prevApps.map(app => {
       if (app.id !== activeAppId) return app;
 
-      // Create a copy of the app's data state
       let newData = { ...app.data };
 
-      // >>> ACCUMULATOR LOGIC (e.g., Red Car Counter)
+      // >>> ACCUMULATOR LOGIC
       if (actionType === 'INCREMENT_COUNT') {
         const key = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number');
         if (key) newData[key] = (newData[key] || 0) + (payload.amount || 1);
       }
 
-      // >>> REGULATOR LOGIC (e.g., Laundry Timer)
+      // >>> REGULATOR LOGIC
       if (actionType === 'START_TIMER') {
         newData.is_running = true;
         newData.finished = false;
@@ -135,16 +157,14 @@ export default function App() {
       if (actionType === 'RESET_TIMER') {
         newData.is_running = false;
         newData.finished = false;
-        // Reset to initial value if provided, or find the numeric key and set to 0
         const key = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number');
         if (key) newData[key] = payload.initialValue || 0;
       }
 
-      // >>> CHECKLIST LOGIC (e.g., Beach Packing)
+      // >>> CHECKLIST LOGIC
       if (actionType === 'ADD_CHECKLIST_ITEM') {
         const key = payload.key;
         const currentList = Array.isArray(newData[key]) ? newData[key] : [];
-        // Add new item to the array
         newData[key] = [...currentList, { label: payload.value, checked: false }];
       }
       if (actionType === 'TOGGLE_CHECKLIST_ITEM') {
@@ -194,10 +214,8 @@ export default function App() {
       
       const result = await chat.sendMessage(userText);
       const responseText = result.response.text();
-      console.log("Raw Response:", responseText); // For debugging
       const responseData = JSON.parse(responseText);
 
-      // --- 4. APP GENERATION LOGIC ---
       if (responseData.tool_name && responseData.blueprint) {
         const newApp = { 
           id: activeAppId || Date.now(), 
@@ -272,7 +290,6 @@ export default function App() {
         <div className="flex-1 p-6 overflow-y-auto block relative pb-24">
           {loading && <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-medium z-50 flex items-center gap-2 shadow-xl"><Loader2 size={14} className="animate-spin"/> Thinking...</div>}
           
-          {/* --- RENDER THE APP BLUEPRINT --- */}
           {activeApp && (
             <div className="w-full mx-auto">
               <A2UIRenderer 
