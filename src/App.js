@@ -10,14 +10,14 @@ import { SYSTEM_PROMPT } from './ai/systemPrompt';
 // CONFIGURATION
 const GEMINI_MODEL_VERSION = "gemini-2.5-flash"; 
 
-// --- 1. THE FIXED SCHEMA (Satisfies "Non-Empty" Requirement) ---
+// --- 1. THE SCHEMA (Flexible & Tolerant) ---
 const RESPONSE_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
     tool_name: { type: SchemaType.STRING },
     archetype: { type: SchemaType.STRING, enum: ["Accumulator", "Regulator", "Checklist", "Drafter"] },
     
-    // FIX: We must define the properties we expect. We make them nullable so they are optional.
+    // We allow nullable to prevent strict validation errors
     initial_state: { 
       type: SchemaType.OBJECT, 
       properties: {
@@ -25,7 +25,6 @@ const RESPONSE_SCHEMA = {
         is_running: { type: SchemaType.BOOLEAN, nullable: true },
         finished: { type: SchemaType.BOOLEAN, nullable: true },
         time_remaining: { type: SchemaType.NUMBER, nullable: true },
-        // For lists, we define a structured array
         items: { 
             type: SchemaType.ARRAY, 
             nullable: true,
@@ -52,8 +51,6 @@ const RESPONSE_SCHEMA = {
           action: { type: SchemaType.STRING },
           items_key: { type: SchemaType.STRING },
           state_key: { type: SchemaType.STRING },
-          
-          // FIX: Define common payload keys explicitly
           payload: { 
             type: SchemaType.OBJECT, 
             properties: {
@@ -86,13 +83,9 @@ export default function App() {
   const messagesEndRef = useRef(null);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
 
-  // Persistence
   useEffect(() => { localStorage.setItem('neural_apps', JSON.stringify(apps)); }, [apps]);
-  
-  // Scroll to bottom
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
   
-  // Rate Limit Countdown
   useEffect(() => { 
     if (rateLimitTimer > 0) { 
       const t = setInterval(() => setRateLimitTimer(c => c - 1), 1000); 
@@ -100,7 +93,7 @@ export default function App() {
     } 
   }, [rateLimitTimer]);
 
-  // --- 2. THE TIMER HEARTBEAT (Makes "Regulator" Apps Tick) ---
+  // --- 2. THE TIMER HEARTBEAT ---
   useEffect(() => {
     const interval = setInterval(() => {
       setApps(prevApps => prevApps.map(app => {
@@ -114,7 +107,6 @@ export default function App() {
                 data: { ...app.data, [timeKey]: app.data[timeKey] - 1 } 
               };
             } else {
-              // Timer finished
               return { 
                 ...app, 
                 data: { ...app.data, is_running: false, finished: true } 
@@ -131,46 +123,42 @@ export default function App() {
 
   const activeApp = apps.find(a => a.id === activeAppId);
 
-    // --- 3. THE SELF-HEALING NERVOUS SYSTEM ---
+  // --- 3. THE "SELF-HEALING" NERVOUS SYSTEM ---
   const handleAppAction = (actionType, payload) => {
     if (!activeApp) return;
 
     setApps(prevApps => prevApps.map(app => {
       if (app.id !== activeAppId) return app;
 
-      // Create a copy of the data
       let newData = { ...app.data };
 
-      // HELPER: Auto-Healer for missing keys
-      // If the AI asks to modify 'x', but 'x' is missing, create it.
-      const ensureKey = (key, defaultValue) => {
-        if (newData[key] === undefined) {
-          console.warn(`[Self-Healing] Missing key '${key}' detected. Auto-creating with value:`, defaultValue);
-          newData[key] = defaultValue;
-        }
-        return key;
+      // HELPER: FIND THE BEST KEY
+      // If the AI says "use key X" but X doesn't exist, find a better one.
+      const findBestKey = (requestedKey, type) => {
+        // 1. If the requested key exists, use it.
+        if (newData[requestedKey] !== undefined) return requestedKey;
+        
+        // 2. If not, look for ANY key that matches the type we need.
+        const fallback = Object.keys(newData).find(k => {
+            if (type === 'array') return Array.isArray(newData[k]);
+            if (type === 'number') return typeof newData[k] === 'number';
+            if (type === 'boolean') return typeof newData[k] === 'boolean';
+            return false;
+        });
+
+        // 3. If found, use the fallback. If not, return the requested key (and we will force-create it).
+        return fallback || requestedKey;
       };
 
-      // --- UNIVERSAL HANDLERS (No specific app logic allowed) ---
-
-      // 1. GENERIC NUMERIC OPS (Handles Counters, Scores, Trackers)
+      // >>> ACCUMULATOR LOGIC
       if (actionType === 'INCREMENT_COUNT') {
-        // Try to find the target key, or fallback to ANY number key, or default to 'count'
-        let targetKey = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number') || 'count';
-        ensureKey(targetKey, 0); // Heal: If 'red_cars' missing, set to 0
-        
-        const amount = payload.amount || 1;
-        newData[targetKey] = Number(newData[targetKey]) + amount;
+        const key = findBestKey(payload.key || 'count', 'number');
+        // Force create if still missing
+        if (newData[key] === undefined) newData[key] = 0;
+        newData[key] = Number(newData[key]) + (payload.amount || 1);
       }
 
-      // 2. GENERIC BOOLEAN OPS (Handles Toggles, Switches)
-      if (actionType === 'TOGGLE_STATE') {
-         let targetKey = payload.key || 'is_active';
-         ensureKey(targetKey, false); // Heal: If missing, set to false
-         newData[targetKey] = !newData[targetKey];
-      }
-
-    // 3. GENERIC TIMER OPS (Handles any timer)
+      // >>> REGULATOR LOGIC
       if (actionType === 'START_TIMER') {
         newData.is_running = true;
         newData.finished = false;
@@ -181,51 +169,55 @@ export default function App() {
       if (actionType === 'RESET_TIMER') {
         newData.is_running = false;
         newData.finished = false;
-        // Find the time key and reset it
-        const timeKey = payload.key || Object.keys(newData).find(k => typeof newData[k] === 'number');
-        if (timeKey) newData[timeKey] = payload.initialValue || 0;
+        const key = findBestKey(payload.key || 'time_remaining', 'number');
+        if (key) newData[key] = payload.initialValue || 0;
       }
 
-      // 4. GENERIC LIST OPS (Handles Checklists, Packing, Todos)
-      if (actionType === 'ADD_CHECKLIST_ITEM' || actionType === 'ADD_ITEM') {
-        const listKey = payload.key || 'items';
-        ensureKey(listKey, []); // Heal: If missing, create empty array
+      // >>> CHECKLIST LOGIC (The Fix for Beach List)
+      if (actionType === 'ADD_CHECKLIST_ITEM') {
+        // 1. Find the best array to add to. 
+        // If 'items' doesn't exist, it might be 'packing_list'. If neither, it defaults to 'items'.
+        const key = findBestKey(payload.key || 'items', 'array');
         
-        // Robustness: Ensure it is actually an array
-        if (!Array.isArray(newData[listKey])) newData[listKey] = [];
-        
-        newData[listKey] = [...newData[listKey], { 
+        // 2. Ensure it is actually an array (Self-Healing)
+        if (!Array.isArray(newData[key])) {
+             console.warn(`[Self-Healing] Created missing array for key: ${key}`);
+             newData[key] = [];
+        }
+
+        // 3. Add the item
+        newData[key] = [...newData[key], { 
             label: payload.value || "New Item", 
-            checked: false, 
+            checked: false,
             id: Date.now() 
         }];
       }
 
       if (actionType === 'TOGGLE_CHECKLIST_ITEM') {
-        const listKey = payload.key || 'items';
-        if (Array.isArray(newData[listKey]) && newData[listKey][payload.index]) {
-            const list = [...newData[listKey]];
-            list[payload.index].checked = !list[payload.index].checked;
-            newData[listKey] = list;
+        const key = findBestKey(payload.key || 'items', 'array');
+        if (Array.isArray(newData[key]) && newData[key][payload.index]) {
+          const updatedList = [...newData[key]];
+          updatedList[payload.index].checked = !updatedList[payload.index].checked;
+          newData[key] = updatedList;
         }
       }
 
       if (actionType === 'DELETE_CHECKLIST_ITEM') {
-        const listKey = payload.key || 'items';
-        if (Array.isArray(newData[listKey])) {
-            const list = [...newData[listKey]];
-            list.splice(payload.index, 1);
-            newData[listKey] = list;
+        const key = findBestKey(payload.key || 'items', 'array');
+        if (Array.isArray(newData[key])) {
+          const updatedList = [...newData[key]];
+          updatedList.splice(payload.index, 1);
+          newData[key] = updatedList;
         }
       }
-
+      
       if (actionType === 'EDIT_CHECKLIST_ITEM') {
-         const listKey = payload.key || 'items';
-         if (Array.isArray(newData[listKey]) && newData[listKey][payload.index]) {
-             const list = [...newData[listKey]];
-             list[payload.index].label = payload.value;
-             newData[listKey] = list;
-         }
+        const key = findBestKey(payload.key || 'items', 'array');
+        if (Array.isArray(newData[key]) && newData[key][payload.index]) {
+          const updatedList = [...newData[key]];
+          updatedList[payload.index].label = payload.value;
+          newData[key] = updatedList;
+        }
       }
 
       return { ...app, data: newData };
